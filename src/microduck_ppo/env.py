@@ -41,7 +41,7 @@ def _axis_quat(axis: np.ndarray, angle: float) -> np.ndarray:
     return np.array([math.cos(half), *(np.asarray(axis) * math.sin(half))], dtype=np.float64)
 
 
-def default_robot_xml() -> Path | None:
+def default_robot_xml(rollers: bool = False) -> Path | None:
     """Find the official DuckKing/MicroDuck model without copying it into this repo."""
 
     candidates = []
@@ -49,11 +49,12 @@ def default_robot_xml() -> Path | None:
     if configured:
         candidates.append(Path(configured))
     here = Path(__file__).resolve()
+    filename = "robot_groundcontact_rollers.xml" if rollers else "robot_groundcontact.xml"
     candidates.extend(
         [
-            here.parents[3] / "DuckKing" / "external/microduck_rl/src/mjlab_microduck/robot/microduck/robot_groundcontact.xml",
-            here.parents[2] / "DuckKing" / "external/microduck_rl/src/mjlab_microduck/robot/microduck/robot_groundcontact.xml",
-            Path("external/microduck_rl/src/mjlab_microduck/robot/microduck/robot_groundcontact.xml"),
+            here.parents[3] / "DuckKing" / "external/microduck_rl/src/mjlab_microduck/robot/microduck" / filename,
+            here.parents[2] / "DuckKing" / "external/microduck_rl/src/mjlab_microduck/robot/microduck" / filename,
+            Path("external/microduck_rl/src/mjlab_microduck/robot/microduck") / filename,
         ]
     )
     return next((path.resolve() for path in candidates if path.exists()), None)
@@ -71,6 +72,10 @@ class BalanceConfig:
     platform_top: float = 0.0
     platform_tilt_x: float = math.radians(8.0)
     platform_tilt_y: float = math.radians(8.0)
+    terrain: str = "turntable"
+    terrain_friction: float = 1.0
+    roughness: float = 0.0
+    slope: float = 0.0
     omega_center: float = 0.75
     omega_amplitude: float = 0.55
     omega_frequency: float = 0.65
@@ -78,6 +83,14 @@ class BalanceConfig:
     max_initial_spin: float = 0.12
     curriculum: float = 1.0
     action_scale: float = ACTION_SCALE
+    disturbance_enabled: bool = False
+    disturbance_count: int = 6
+    disturbance_start: float = 1.0
+    disturbance_interval: float = 1.5
+    disturbance_force: float = 0.35
+    disturbance_torque: float = 0.06
+    disturbance_duration: float = 0.05
+    disturbance_seed: int | None = None
     render_width: int = 720
     render_height: int = 540
 
@@ -102,7 +115,7 @@ class MicroDuckBalanceEnv(gym.Env[np.ndarray, np.ndarray]):
         self.config = config or BalanceConfig()
         self.render_mode = render_mode
         self._rng = np.random.default_rng()
-        xml_candidate = self.config.robot_xml or default_robot_xml()
+        xml_candidate = self.config.robot_xml or default_robot_xml(self.config.terrain == "roller")
         self._toy = xml_candidate is None or not xml_candidate.exists()
         self._model: mujoco.MjModel | None = None
         self._data: mujoco.MjData | None = None
@@ -123,6 +136,8 @@ class MicroDuckBalanceEnv(gym.Env[np.ndarray, np.ndarray]):
         self._last_action = np.zeros(14, dtype=np.float32)
         self._last_feet = np.zeros((2, 3), dtype=np.float64)
         self._last_info: dict[str, Any] = {}
+        self._disturbances: list[dict[str, Any]] = []
+        self._active_disturbance: dict[str, Any] | None = None
         self._build_model()
         self.action_space = spaces.Box(-1.0, 1.0, shape=(14,), dtype=np.float32)
         # 3+3+14+14+2+2+3+2+2+14 = 59
@@ -141,7 +156,7 @@ class MicroDuckBalanceEnv(gym.Env[np.ndarray, np.ndarray]):
         return self._data
 
     def _build_model(self) -> None:
-        xml = self.config.robot_xml or default_robot_xml()
+        xml = self.config.robot_xml or default_robot_xml(self.config.terrain == "roller")
         if self._toy:
             self._build_toy_model()
             return
@@ -159,9 +174,25 @@ class MicroDuckBalanceEnv(gym.Env[np.ndarray, np.ndarray]):
             type=mujoco.mjtGeom.mjGEOM_CYLINDER,
             size=[self.config.platform_radius, 0.035, 0],
             rgba=[0.08, 0.33, 0.58, 1],
-            friction=[1.0, 0.8, 0.02],
+            friction=[self.config.terrain_friction, self.config.terrain_friction * 0.8, 0.02],
             condim=6,
         )
+        if self.config.terrain == "rough" and self.config.roughness > 0:
+            for index, (x, y) in enumerate(
+                ((-0.12, -0.12), (0.0, -0.12), (0.12, -0.12),
+                 (-0.12, 0.0), (0.0, 0.0), (0.12, 0.0),
+                 (-0.12, 0.12), (0.0, 0.12), (0.12, 0.12))
+            ):
+                height = self.config.roughness * (0.5 + 0.25 * (index % 3))
+                platform.add_geom(
+                    name=f"rough_patch_{index}",
+                    type=mujoco.mjtGeom.mjGEOM_BOX,
+                    pos=[x, y, 0.035 + height / 2],
+                    size=[0.045, 0.045, height / 2],
+                    rgba=[0.12, 0.40, 0.62, 1],
+                    friction=[self.config.terrain_friction, self.config.terrain_friction * 0.8, 0.02],
+                    condim=6,
+                )
         self._model = spec.compile()
         self._data = mujoco.MjData(self.model)
         self._configure_ids()
@@ -212,13 +243,36 @@ class MicroDuckBalanceEnv(gym.Env[np.ndarray, np.ndarray]):
         self._gyro_adr = self.model.sensor_adr[self.model.sensor("imu_ang_vel").id]
         self._platform_geom = self.model.geom("turntable_surface").id
         self._mocap_id = int(self.model.body("turntable").mocapid[0])
-        self._feet = np.array(
-            [self.model.geom("left_foot_collision").id, self.model.geom("right_foot_collision").id],
-            dtype=np.int32,
-        )
+        self._feet = np.array(self._find_foot_geoms(), dtype=np.int32)
         self._foot_sites = np.array(
             [self.model.site("left_foot").id, self.model.site("right_foot").id], dtype=np.int32
         )
+
+    def _find_foot_geoms(self) -> list[int]:
+        names = ("left_foot_collision", "right_foot_collision")
+        try:
+            return [self.model.geom(name).id for name in names]
+        except KeyError:
+            ankle_names = ("ankle_l_v1", "ankle_r_v1")
+            result = []
+            for ankle in ankle_names:
+                body = self.model.body(ankle).id
+                bodies = {body}
+                for candidate in range(self.model.nbody):
+                    parent = candidate
+                    while parent > 0:
+                        parent = int(self.model.body_parentid[parent])
+                        if parent == body:
+                            bodies.add(candidate)
+                            break
+                candidates = [
+                    i for i in range(self.model.ngeom)
+                    if self.model.geom_bodyid[i] in bodies and self.model.geom_contype[i] != 0
+                ]
+                if not candidates:
+                    raise ValueError(f"找不到 {ankle} 的接触几何体") from None
+                result.append(candidates[0])
+            return result
 
     def set_curriculum(self, level: float) -> None:
         """Set difficulty in [0, 1]; useful from a Stable-Baselines3 callback."""
@@ -245,8 +299,13 @@ class MicroDuckBalanceEnv(gym.Env[np.ndarray, np.ndarray]):
         return self._omega_sign * level * integral
 
     def _platform_tilt(self) -> tuple[float, float]:
+        if self.config.terrain == "flat":
+            return 0.0, 0.0
         level = self._difficulty()
-        return level * self.config.platform_tilt_x, level * self.config.platform_tilt_y
+        return (
+            level * self.config.platform_tilt_x + self.config.slope,
+            level * self.config.platform_tilt_y,
+        )
 
     def _set_platform(self, t: float) -> None:
         tilt_x, tilt_y = self._platform_tilt()
@@ -277,9 +336,49 @@ class MicroDuckBalanceEnv(gym.Env[np.ndarray, np.ndarray]):
             self.data.ctrl[self._actuators] = HOME
         self.data.qvel[:] = 0
         self._last_action.fill(0)
+        self._prepare_disturbances()
         self._set_platform(0)
         mujoco.mj_forward(self.model, self.data)
         self._last_feet[:] = self.data.site_xpos[self._foot_sites]
+
+    def _prepare_disturbances(self) -> None:
+        self._disturbances = []
+        self._active_disturbance = None
+        if not self.config.disturbance_enabled:
+            return
+        seed = self.config.disturbance_seed
+        rng = np.random.default_rng(
+            seed if seed is not None else int(self._rng.integers(2**31 - 1))
+        )
+        for index in range(self.config.disturbance_count):
+            direction = rng.normal(size=2)
+            direction /= max(np.linalg.norm(direction), 1e-8)
+            self._disturbances.append(
+                {
+                    "index": index,
+                    "time": self.config.disturbance_start + index * self.config.disturbance_interval,
+                    "duration": self.config.disturbance_duration,
+                    "direction": direction.tolist(),
+                    "force": self.config.disturbance_force,
+                    "torque": float(
+                        rng.uniform(-self.config.disturbance_torque, self.config.disturbance_torque)
+                    ),
+                }
+            )
+
+    def _apply_disturbance(self) -> dict[str, Any] | None:
+        self.data.xfrc_applied[self._trunk] = 0
+        self._active_disturbance = None
+        for event in self._disturbances:
+            if event["time"] <= self._time < event["time"] + event["duration"]:
+                direction = np.asarray(event["direction"], dtype=np.float64)
+                self.data.xfrc_applied[self._trunk, :3] = [
+                    event["force"] * direction[0], event["force"] * direction[1], 0
+                ]
+                self.data.xfrc_applied[self._trunk, 5] = event["torque"]
+                self._active_disturbance = event
+                break
+        return self._active_disturbance
 
     def _contact(self, geom_id: int) -> bool:
         for i in range(self.data.ncon):
@@ -356,7 +455,12 @@ class MicroDuckBalanceEnv(gym.Env[np.ndarray, np.ndarray]):
             self._rng = np.random.default_rng(seed)
         self._reset_state()
         obs = self._observation()
-        return obs, {"difficulty": self._difficulty(), "backend": "mujoco" if not self._toy else "mujoco_toy"}
+        return obs, {
+            "difficulty": self._difficulty(),
+            "backend": "mujoco" if not self._toy else "mujoco_toy",
+            "terrain": self.config.terrain,
+            "disturbances": list(self._disturbances),
+        }
 
     def step(self, action: np.ndarray):
         action = np.asarray(action, dtype=np.float32).reshape(14)
@@ -365,11 +469,13 @@ class MicroDuckBalanceEnv(gym.Env[np.ndarray, np.ndarray]):
         n_substeps = max(1, round(self.config.control_interval / self.config.physics_timestep))
         for _ in range(n_substeps):
             self._set_platform(self._time)
+            self._apply_disturbance()
             if self._toy:
                 self.data.ctrl[:] = action[:2] * self.config.action_scale
             else:
                 self.data.ctrl[self._actuators] = HOME + action * self.config.action_scale
             mujoco.mj_step(self.model, self.data)
+            self.data.xfrc_applied[self._trunk] = 0
             self._time += self.config.physics_timestep
         reward, metrics = self._reward(action, previous)
         self._last_action = action
@@ -377,7 +483,20 @@ class MicroDuckBalanceEnv(gym.Env[np.ndarray, np.ndarray]):
         self._last_feet[:] = self.data.site_xpos[self._foot_sites]
         terminated = self._has_fallen()
         truncated = self._time >= self.config.episode_seconds
-        metrics.update({"time": self._time, "omega": self._omega(self._time), "difficulty": self._difficulty()})
+        metrics.update(
+            {
+                "time": self._time,
+                "omega": self._omega(self._time),
+                "difficulty": self._difficulty(),
+                "terrain": self.config.terrain,
+                "disturbance_active": float(self._active_disturbance is not None),
+                "disturbance_index": (
+                    -1 if self._active_disturbance is None else self._active_disturbance["index"]
+                ),
+                "disturbance_count": len(self._disturbances),
+                "failure_reason": "fallen" if terminated else "",
+            }
+        )
         self._last_info = metrics
         return obs, reward, terminated, truncated, metrics
 

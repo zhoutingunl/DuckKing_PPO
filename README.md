@@ -1,6 +1,6 @@
 # MicroDuck PPO Balance
 
-这是一个独立的 PPO 实验仓库，用于让仿真 MicroDuck 在**倾斜、非匀速旋转的转盘**上保持站立，并导出可视化学习过程。
+这是一个独立的 PPO 实验仓库，用于研究仿真 MicroDuck 的平衡、扰动恢复、复杂地形运动和多鸭协作，并导出可视化学习过程。
 
 实现参考 `microduck_mujoco_reinforcement_learning.md` 和 DuckKing 的 MuJoCo 控制接口：14 个策略关节、官方 `HOME` 姿态、200 Hz 物理步进、50 Hz 残差控制。策略输出 `[-1, 1]` 的关节目标残差，由现有 position actuator 执行。
 
@@ -13,6 +13,9 @@
 - 课程学习从低速/低倾角逐步增加到目标扰动；每回合随机化方向、相位、初始姿态。
 - `evaluate` 输出存活率和回合指标；`visualize` 输出 MP4、CSV 和 PNG 曲线。
 - 找不到官方 MJCF 时自动使用小型 MuJoCo toy 模型，便于本地 CI 验证。真实 MicroDuck 训练请传 `--robot-xml`。
+- `recovery` 任务提供固定种子的推搡/力矩事件和恢复指标。
+- `terrain` 任务支持 `flat`、`rough`、低摩擦和 `roller` 模式；官方轮滑 MJCF 会自动选择被动轮模型。
+- `coordination` 任务支持 2–4 鸭的集中式 PPO baseline，奖励目标到达、编队保持和避碰。
 
 ## 本地运行
 
@@ -21,8 +24,12 @@
 ```bash
 uv sync
 uv run microduck-train --timesteps 100000 --check-env --output runs/microduck_balance
+uv run microduck-train --task recovery --disturbance --timesteps 100000 --output runs/microduck_recovery
+uv run microduck-train --task terrain --terrain rough --roughness 0.01 --terrain-friction 0.55 --timesteps 100000 --output runs/microduck_rough
+uv run microduck-train --task coordination --ducks 2 --timesteps 100000 --output runs/microduck_coordination
 uv run microduck-evaluate runs/microduck_balance/microduck_balance_ppo.zip --episodes 10 --output outputs/evaluation.json
 uv run microduck-visualize runs/microduck_balance/microduck_balance_ppo.zip --output-dir outputs/visualization
+uv run microduck-visualize runs/microduck_recovery/microduck_recovery_ppo.zip --task recovery --disturbance --output-dir outputs/recovery_visualization
 ```
 
 若官方模型位于 DuckKing 的 `external/microduck_rl`，训练器会自动发现；也可以显式指定：
