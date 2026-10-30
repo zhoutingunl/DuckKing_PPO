@@ -74,13 +74,13 @@ def evaluate(model, env, seeds, *, fixed=False):
     }
 
 
-def render_showcase(model, config, folder, seed=42, *, deterministic=True):
+def render_showcase(model, config, folder, seed=42, *, deterministic=True, reset_options=None):
     env = NavigationEnv(config, render_mode="rgb_array")
     rows = []
     fps = 1 / config.control_interval
     prefix = "" if deterministic else "exploration_"
     try:
-        obs, initial = env.reset(seed=seed)
+        obs, initial = env.reset(seed=seed, options=reset_options)
         # Seed action sampling separately from the environment; the exact same
         # sequence of random draws is used at every checkpoint.
         torch.manual_seed(43)

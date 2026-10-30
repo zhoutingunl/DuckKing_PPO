@@ -49,6 +49,79 @@
         本次学习：目标导航。底层行走使用冻结的预训练步态，通过 14
         个关节驱动；导航初始策略尚未学习目标。所有画面由本机 MuJoCo 生成。
       </div>
+      <section class="playground" aria-labelledby="playground-title">
+        <div class="playground-copy">
+          <span class="eyebrow">观众实验</span>
+          <h2 id="playground-title">你来摆场景，小鸭来走</h2>
+          <p>
+            拖动橙色小鸭和蓝色目标，选择一个训练阶段，再运行同一套 MuJoCo
+            策略。起点和目标会被写入这次回放，结果不会混入训练集。
+          </p>
+          <div class="play-controls">
+            <label>使用策略<select id="play-stage"></select></label>
+            <label
+              >初始朝向
+              <input
+                id="play-yaw"
+                type="range"
+                min="-180"
+                max="180"
+                value="0"
+                step="1"
+              /><output id="play-yaw-value">0°</output></label
+            >
+            <button id="play-run" disabled>运行这个场景</button>
+          </div>
+          <p id="play-message" class="play-message" role="status">
+            先选择一个已完成的训练记录。
+          </p>
+        </div>
+        <div class="scene-editor">
+          <svg
+            id="scene-map"
+            viewBox="0 0 520 300"
+            role="application"
+            aria-label="拖动小鸭起点和目标点来设置仿真场景"
+          >
+            <rect
+              x="18"
+              y="18"
+              width="484"
+              height="264"
+              rx="8"
+              class="scene-floor"
+            />
+            <path d="M260 22V278M22 150H498" class="scene-axis" />
+            <circle
+              id="scene-goal"
+              cx="351.7"
+              cy="150"
+              r="18"
+              class="scene-goal"
+              tabindex="0"
+            />
+            <g id="scene-duck" transform="translate(260 150)" tabindex="0">
+              <circle r="18" class="scene-duck" />
+              <path d="M-5-4L12 0-5 4Z" class="scene-beak" />
+            </g>
+            <text x="28" y="42" class="scene-label">
+              拖动橙色小鸭 / 蓝色目标
+            </text>
+            <text id="scene-coords" x="28" y="266" class="scene-coords"></text>
+          </svg>
+        </div>
+        <div class="play-result" id="play-result" hidden>
+          <video
+            id="play-video"
+            controls
+            playsinline
+            preload="metadata"
+          ></video>
+          <div>
+            <b id="play-result-title"></b><span id="play-result-meta"></span>
+          </div>
+        </div>
+      </section>
       <section id="empty" class="empty" hidden>
         <h2>第一段学习，从这里开始</h2>
         <p>选择训练预算并开始。初始策略会先被保存，随后生成阶段回放。</p>

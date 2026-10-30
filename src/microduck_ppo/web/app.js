@@ -17,6 +17,10 @@ let runId = new URLSearchParams(location.search).get("run"),
   initialRows = [],
   currentRows = [],
   polling = false;
+let sceneStart = { x: 0, y: 0 },
+  sceneGoal = { x: 0.55, y: 0 },
+  dragTarget = null,
+  playgroundId = null;
 const fmt = (n) => Number(n).toLocaleString("zh-CN");
 const duration = (seconds) =>
   seconds == null
@@ -219,6 +223,7 @@ function render() {
     2,
   );
   $("message").textContent = data.error || "";
+  setupPlayground();
   const accept = data.acceptance;
   const results = $("acceptance-results");
   results.replaceChildren();
@@ -253,6 +258,138 @@ function render() {
           : "训练结束后，对验证集选出的最佳策略分别运行固定布局和随机布局评估。";
   }
 }
+function mapToWorld(x, y) {
+  return { x: ((x - 260) / 200) * 1.2, y: ((150 - y) / 110) * 1.2 };
+}
+function worldToMap(point) {
+  return { x: 260 + (point.x / 1.2) * 200, y: 150 - (point.y / 1.2) * 110 };
+}
+function clampScene(point) {
+  return {
+    x: Math.max(-1.1, Math.min(1.1, point.x)),
+    y: Math.max(-1.1, Math.min(1.1, point.y)),
+  };
+}
+function updateSceneMap() {
+  const duck = worldToMap(sceneStart),
+    goal = worldToMap(sceneGoal);
+  $("scene-duck").setAttribute("transform", `translate(${duck.x} ${duck.y})`);
+  $("scene-goal").setAttribute("cx", goal.x);
+  $("scene-goal").setAttribute("cy", goal.y);
+  $("scene-coords").textContent =
+    `起点 (${sceneStart.x.toFixed(2)}, ${sceneStart.y.toFixed(2)}) · 目标 (${sceneGoal.x.toFixed(2)}, ${sceneGoal.y.toFixed(2)}) · 距离 ${Math.hypot(sceneGoal.x - sceneStart.x, sceneGoal.y - sceneStart.y).toFixed(2)} m`;
+  const valid =
+    Math.hypot(sceneGoal.x - sceneStart.x, sceneGoal.y - sceneStart.y) >= 0.1;
+  $("play-run").disabled =
+    !data ||
+    !["passed", "unqualified", "stopped"].includes(data.status) ||
+    !valid ||
+    !$("play-stage").value;
+  if (!valid) $("play-message").textContent = "起点和目标至少相距 0.1 米。";
+}
+function setupPlayground() {
+  const select = $("play-stage"),
+    previous = select.value;
+  select.replaceChildren(
+    ...(data?.stages || [])
+      .filter((s) => s.status === "ready" && s.directory)
+      .map((s) => {
+        const option = document.createElement("option");
+        option.value = s.directory;
+        option.textContent =
+          stageLabel(s) +
+          (s.directory === data.best_directory ? " · 最佳" : "");
+        return option;
+      }),
+  );
+  if (previous && [...select.options].some((o) => o.value === previous))
+    select.value = previous;
+  updateSceneMap();
+}
+function svgPoint(event) {
+  const svg = $("scene-map"),
+    rect = svg.getBoundingClientRect();
+  return {
+    x: ((event.clientX - rect.left) * 520) / rect.width,
+    y: ((event.clientY - rect.top) * 300) / rect.height,
+  };
+}
+function moveScene(event) {
+  if (!dragTarget) return;
+  const point = clampScene(mapToWorld(...Object.values(svgPoint(event))));
+  if (dragTarget === "duck") sceneStart = point;
+  else sceneGoal = point;
+  updateSceneMap();
+}
+$("scene-map").addEventListener("pointerdown", (event) => {
+  const point = svgPoint(event),
+    duck = worldToMap(sceneStart),
+    goal = worldToMap(sceneGoal);
+  dragTarget =
+    Math.hypot(point.x - duck.x, point.y - duck.y) < 28
+      ? "duck"
+      : Math.hypot(point.x - goal.x, point.y - goal.y) < 28
+        ? "goal"
+        : null;
+  if (dragTarget) event.currentTarget.setPointerCapture(event.pointerId);
+});
+$("scene-map").addEventListener("pointermove", moveScene);
+$("scene-map").addEventListener("pointerup", () => {
+  dragTarget = null;
+});
+$("scene-map").addEventListener("pointercancel", () => {
+  dragTarget = null;
+});
+$("play-yaw").oninput = () => {
+  $("play-yaw-value").textContent = `${$("play-yaw").value}°`;
+};
+$("play-stage").onchange = updateSceneMap;
+$("play-run").onclick = async () => {
+  if (!runId || !$("play-stage").value) return;
+  $("play-run").disabled = true;
+  $("play-message").textContent = "正在用这个场景运行 MuJoCo…";
+  $("play-result").hidden = true;
+  try {
+    const result = await api(
+      `/api/runs/${encodeURIComponent(runId)}/playground`,
+      {
+        stage: $("play-stage").value,
+        start: [sceneStart.x, sceneStart.y],
+        goal: [sceneGoal.x, sceneGoal.y],
+        yaw: (Number($("play-yaw").value) * Math.PI) / 180,
+      },
+    );
+    playgroundId = result.id;
+    const wait = async () => {
+      const record = await api(
+        `/api/runs/${encodeURIComponent(runId)}/playground/${encodeURIComponent(playgroundId)}`,
+      );
+      if (record.status === "running") return setTimeout(wait, 1000);
+      if (record.status !== "ready")
+        throw Error(record.error || "场景回放失败");
+      const video = $("play-video");
+      video.src = url(`playground/${playgroundId}/rollout.mp4`);
+      video.poster = url(`playground/${playgroundId}/poster.jpg`);
+      video.load();
+      const outcome = record.showcase.outcome;
+      $("play-result-title").textContent = outcome.is_success
+        ? "抵达了你放置的目标"
+        : outcome.failure_reason === "fall"
+          ? "小鸭摔倒了"
+          : "这次没有抵达";
+      $("play-result-meta").textContent =
+        `策略 ${stageLabel(data.stages.find((s) => s.directory === record.stage))} · 最终距离 ${outcome.distance.toFixed(3)} 米 · 仿真 ${outcome.time.toFixed(1)} 秒 · 用时 ${record.elapsed_seconds.toFixed(1)} 秒`;
+      $("play-result").hidden = false;
+      $("play-message").textContent =
+        "可以继续拖动位置，或换一个训练阶段再运行。";
+      updateSceneMap();
+    };
+    await wait();
+  } catch (error) {
+    $("play-message").textContent = error.message;
+    updateSceneMap();
+  }
+};
 async function poll() {
   if (polling) return;
   polling = true;

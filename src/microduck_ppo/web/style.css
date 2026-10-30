@@ -143,6 +143,147 @@ button:disabled {
   font-size: 13px;
   margin: 15px 0 25px;
 }
+.playground {
+  display: grid;
+  grid-template-columns: 1fr 1.15fr;
+  gap: 25px;
+  padding: 25px 0;
+  margin: 8px 0 28px;
+  border-top: 2px solid var(--orange);
+  border-bottom: 1px solid var(--line);
+}
+.eyebrow {
+  font-size: 11px;
+  color: var(--orange);
+  letter-spacing: 0.08em;
+}
+.playground-copy h2 {
+  font-size: 24px;
+  margin: 3px 0 7px;
+}
+.playground-copy p {
+  max-width: 57ch;
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0 0 16px;
+}
+.play-controls {
+  display: flex;
+  align-items: end;
+  gap: 13px;
+  flex-wrap: wrap;
+}
+.play-controls label {
+  font-size: 12px;
+  color: var(--muted);
+}
+.play-controls select {
+  display: block;
+  margin-top: 4px;
+  font-size: 13px;
+}
+.play-controls input {
+  display: block;
+  width: 150px;
+  margin-top: 9px;
+  accent-color: var(--orange);
+}
+.play-controls output {
+  display: inline-block;
+  font-size: 12px;
+  color: var(--ink);
+  margin-top: 2px;
+}
+.play-message {
+  min-height: 24px;
+  color: var(--orange) !important;
+  margin-top: 13px !important;
+}
+.scene-editor {
+  background: #d8e3e7;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px;
+}
+.scene-editor svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.scene-floor {
+  fill: #f6fafb;
+  stroke: #afc1ca;
+}
+.scene-axis {
+  stroke: #d7e2e6;
+  stroke-dasharray: 4 5;
+}
+.scene-goal {
+  fill: #2075c2;
+  fill-opacity: 0.9;
+  stroke: #0f4e84;
+  stroke-width: 2;
+  cursor: grab;
+}
+.scene-duck {
+  fill: #d47735;
+  stroke: #934516;
+  stroke-width: 2;
+  cursor: grab;
+}
+.scene-beak {
+  fill: #f0b33e;
+}
+.scene-label,
+.scene-coords {
+  font:
+    12px "Avenir Next",
+    "PingFang SC",
+    sans-serif;
+  fill: #617786;
+  pointer-events: none;
+}
+.scene-goal:focus,
+.scene-duck:focus {
+  outline: none;
+  filter: drop-shadow(0 0 4px var(--orange));
+}
+.play-result {
+  grid-column: 1/-1;
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) 1fr;
+  gap: 18px;
+  align-items: center;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 12px;
+}
+.play-result video {
+  max-height: 280px;
+  background: #b8c5ce;
+}
+.play-result b,
+.play-result span {
+  display: block;
+}
+.play-result span {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 5px;
+}
+@media (max-width: 780px) {
+  .playground {
+    grid-template-columns: 1fr;
+  }
+  .play-result {
+    grid-column: auto;
+    grid-template-columns: 1fr;
+  }
+  .playground-copy h2 {
+    font-size: 21px;
+  }
+}
 .run-status {
   padding: 0 0 20px;
 }

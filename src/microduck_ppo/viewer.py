@@ -82,6 +82,18 @@ class Handler(SimpleHTTPRequestHandler):
                     stride = max(1, len(rows) // 500)
                     payload["episodes"] = rows[::stride]
                 return self.json_response(payload)
+            if len(parts) == 5 and parts[:4] == ["api", "runs", parts[2], "playground"]:
+                run = self.run_path(parts[2])
+                playground_id = parts[4]
+                if not re.fullmatch(r"[\w.-]+", playground_id):
+                    raise ValueError("Invalid playground id")
+                record = confined(run, f"playground/{playground_id}/playground.json")
+                if not record.exists():
+                    worker = self.server.playground_workers.get(playground_id)
+                    if worker is not None and worker.poll() is None:
+                        return self.json_response({"status": "running"})
+                    raise FileNotFoundError("场景回放记录尚未生成")
+                return self.json_response(read_json(record))
             if len(parts) >= 3 and parts[0] == "artifacts":
                 run = self.run_path(parts[1])
                 path = confined(run, "/".join(parts[2:]))
@@ -175,6 +187,65 @@ class Handler(SimpleHTTPRequestHandler):
                             stderr=log,
                         )
                 return self.json_response({"id": run_id}, 202)
+            if (
+                len(parts) == 4
+                and parts[:3] == ["api", "runs", parts[2]]
+                and parts[3] == "playground"
+            ):
+                length = int(self.headers.get("Content-Length", 0))
+                if length > 4096:
+                    raise ValueError("Request too large")
+                data = json.loads(self.rfile.read(length))
+                run = self.run_path(parts[2])
+                if read_json(run / "run.json").get("status") not in {
+                    "passed",
+                    "unqualified",
+                    "stopped",
+                }:
+                    raise ValueError("请等待训练记录完成后再体验")
+                stage = str(data.get("stage", ""))
+                if not re.fullmatch(r"stages/\d{9}", stage):
+                    raise ValueError("Invalid checkpoint stage")
+                start = [float(v) for v in data.get("start", [])]
+                goal = [float(v) for v in data.get("goal", [])]
+                yaw = float(data.get("yaw", 0))
+                if (
+                    len(start) != 2
+                    or len(goal) != 2
+                    or not all(map(lambda v: v == v and abs(v) <= 1.2, start + goal))
+                ):
+                    raise ValueError("起点和目标必须是 [-1.2, 1.2] 内的有限坐标")
+                if abs(yaw) > 3.1415927 or sum((start[i] - goal[i]) ** 2 for i in range(2)) < 0.01:
+                    raise ValueError("请设置有效朝向，并让起点与目标至少相距 0.1 米")
+                stage_policy = confined(run, f"{stage}/policy.zip")
+                if not stage_policy.is_file():
+                    raise ValueError("所选策略还没有生成")
+                playground_id = time.strftime("play-%H%M%S-") + uuid.uuid4().hex[:5]
+                output = confined(run, f"playground/{playground_id}")
+                output.mkdir(parents=True)
+                with (output / "worker.log").open("w") as log:
+                    self.server.playground_workers[playground_id] = subprocess.Popen(
+                        [
+                            sys.executable,
+                            "-m",
+                            "microduck_ppo.playground",
+                            "--run",
+                            str(run),
+                            "--stage",
+                            stage,
+                            "--output",
+                            str(output),
+                            "--start",
+                            *map(str, start),
+                            "--goal",
+                            *map(str, goal),
+                            "--yaw",
+                            str(yaw),
+                        ],
+                        stdout=log,
+                        stderr=log,
+                    )
+                return self.json_response({"id": playground_id}, 202)
             if len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "stop":
                 run = self.run_path(parts[2])
                 manifest = read_json(run / "run.json")
@@ -193,6 +264,7 @@ def make_server(root, port=8780):
     server = ThreadingHTTPServer(("127.0.0.1", port), partial(Handler, runs_root=root))
     server.launch_lock = threading.Lock()
     server.learner = None
+    server.playground_workers = {}
     return server
 
 

@@ -38,6 +38,19 @@ def test_navigation_contract_and_seeded_reset(env):
     assert info == repeated
 
 
+def test_audience_can_place_start_goal_and_yaw(env):
+    obs, info = env.reset(
+        seed=11,
+        options={"start": [-0.35, -0.2], "goal": [0.45, 0.25], "yaw": 0.5},
+    )
+    assert obs.shape == (11,)
+    assert info["start_x"] == -0.35 and info["start_y"] == -0.2
+    assert info["goal_x"] == 0.45 and info["goal_y"] == 0.25
+    assert np.isclose(info["start_yaw"], 0.5, atol=1e-6)
+    with pytest.raises(ValueError):
+        env.reset(seed=1, options={"start": [2, 0], "goal": [0.2, 0]})
+
+
 def test_bounded_joint_actuation_moves_robot_without_body_force(env):
     env.reset(seed=5, options={"yaw": 0, "goal": [0.55, 0]})
     for _ in range(40):

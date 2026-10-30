@@ -6,6 +6,7 @@ from urllib.request import Request, urlopen
 import pytest
 
 from microduck_ppo.navigation_artifacts import write_json
+from microduck_ppo.playground import run_playground
 from microduck_ppo.viewer import make_server
 
 
@@ -57,3 +58,15 @@ def test_invalid_budget_cannot_launch_process(viewer):
     with pytest.raises(HTTPError) as result:
         urlopen(Request(base + "/api/train", data=b'{"timesteps":-1}', method="POST"))
     assert result.value.code == 400
+
+
+def test_playground_writes_user_scene_record(tmp_path):
+    run = tmp_path / "run"
+    write_json(
+        run / "run.json",
+        {"status": "passed", "config": {}, "snapshots": []},
+    )
+    # Path validation happens before model loading, so a malformed stage is
+    # rejected without touching an arbitrary path.
+    with pytest.raises(ValueError):
+        run_playground(run, "../secret", tmp_path / "out", [0, 0], [0.5, 0], 0)

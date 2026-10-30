@@ -114,6 +114,8 @@ class NavigationEnv(gym.Env):
         self.last_action = np.zeros(2, dtype=np.float32)
         self.command = np.zeros(13, dtype=np.float32)
         self.goal = np.zeros(2)
+        self.start = np.zeros(2)
+        self.start_yaw = 0.0
         self.steps = 0
         self.hold = 0.0
         self._renderer = None
@@ -171,9 +173,14 @@ class NavigationEnv(gym.Env):
         options = options or {}
         mujoco.mj_resetData(self.model, self.data)
         yaw = float(options.get("yaw", self.np_random.uniform(-math.pi, math.pi)))
+        if not np.isfinite(yaw) or abs(yaw) > math.pi:
+            raise ValueError("yaw must be a finite angle in [-pi, pi]")
+        start = np.asarray(options.get("start", [0.0, 0.0]), dtype=np.float64)
+        if start.shape != (2,) or not np.isfinite(start).all() or np.any(np.abs(start) > 1.2):
+            raise ValueError("start must contain two finite coordinates in [-1.2, 1.2]")
         self.data.qpos[self.root : self.root + 7] = [
-            0,
-            0,
+            start[0],
+            start[1],
             0.125,
             math.cos(yaw / 2),
             0,
@@ -191,9 +198,15 @@ class NavigationEnv(gym.Env):
             self._gait_tick()
         distance = self.np_random.uniform(self.config.distance_min, self.config.distance_max)
         bearing = self.np_random.uniform(-math.pi, math.pi)
-        self.goal[:] = options.get(
-            "goal", [distance * math.cos(bearing), distance * math.sin(bearing)]
+        goal = np.asarray(
+            options.get("goal", [distance * math.cos(bearing), distance * math.sin(bearing)]),
+            dtype=np.float64,
         )
+        if goal.shape != (2,) or not np.isfinite(goal).all() or np.any(np.abs(goal) > 1.2):
+            raise ValueError("goal must contain two finite coordinates in [-1.2, 1.2]")
+        self.start[:] = start
+        self.start_yaw = yaw
+        self.goal[:] = goal
         self.model.site_pos[self.goal_site, :2] = self.goal
         mujoco.mj_forward(self.model, self.data)
         self.steps = 0
@@ -209,6 +222,9 @@ class NavigationEnv(gym.Env):
             "y": float(xy[1]),
             "goal_x": float(self.goal[0]),
             "goal_y": float(self.goal[1]),
+            "start_x": float(self.start[0]),
+            "start_y": float(self.start[1]),
+            "start_yaw": float(self.start_yaw),
             "time": self.steps * self.config.control_interval,
         }
 
