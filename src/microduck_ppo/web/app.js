@@ -30,6 +30,8 @@ const duration = (seconds) =>
       : `${Math.floor(seconds / 60)} 分 ${Math.round(seconds % 60)} 秒`;
 const playback = (stage) => stage?.[$("mode").value];
 const url = (p) => `/artifacts/${encodeURIComponent(runId)}/${p}`;
+const playgroundUrl = (id, suffix = "") =>
+  `/api/runs/${encodeURIComponent(runId)}/playground/${encodeURIComponent(id)}${suffix}`;
 async function api(path, body) {
   const r = await fetch(
     path,
@@ -366,7 +368,7 @@ $("play-run").onclick = async () => {
       );
       if (["starting", "running"].includes(record.status)) {
         $("play-frame").src =
-          `${url(`playground/${playgroundId}/frame.jpg`)}?seq=${record.frame_seq}`;
+          `${playgroundUrl(playgroundId, "/frame.jpg")}?seq=${record.frame_seq}`;
         const info = record.info || {};
         $("play-result-title").textContent =
           `实时仿真中 · ${info.time == null ? "0.0" : info.time.toFixed(1)} 秒`;
@@ -378,7 +380,7 @@ $("play-run").onclick = async () => {
       if (record.status !== "ready")
         throw Error(record.error || "场景回放失败");
       $("play-frame").src =
-        `${url(`playground/${playgroundId}/frame.jpg`)}?seq=${record.frame_seq}`;
+        `${playgroundUrl(playgroundId, "/frame.jpg")}?seq=${record.frame_seq}`;
       const outcome = record.info;
       $("play-result-title").textContent = outcome.is_success
         ? "抵达了你放置的目标"

@@ -299,8 +299,14 @@ class NavigationEnv(gym.Env):
             self.model.vis.global_.offheight = max(480, self.model.vis.global_.offheight)
             self._renderer = mujoco.Renderer(self.model, height=480, width=640)
         camera = mujoco.MjvCamera()
-        camera.lookat[:] = [0, 0, 0.08]
-        camera.distance, camera.azimuth, camera.elevation = 1.65, 135, -60
+        # A close oblique view makes the official MicroDuck mesh and carpet
+        # legible while retaining enough floor to see the route.
+        xy = self.data.qpos[self.root : self.root + 2]
+        midpoint = (xy + self.goal) * 0.5
+        separation = float(np.linalg.norm(self.goal - xy))
+        camera.lookat[:] = [midpoint[0], midpoint[1], 0.08]
+        camera.distance = float(np.clip(0.95 + 1.55 * separation, 1.15, 2.7))
+        camera.azimuth, camera.elevation = 135, -45
         option = mujoco.MjvOption()
         option.geomgroup[3] = 0
         self._renderer.update_scene(self.data, camera=camera, scene_option=option)
