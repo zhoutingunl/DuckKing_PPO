@@ -133,7 +133,7 @@
         </section>
         <section class="evidence">
           <div class="chart-panel">
-            <h2>验证成功率</h2>
+            <h2>检查点验证成功率</h2>
             <svg
               id="chart"
               viewBox="0 0 650 220"
@@ -141,8 +141,9 @@
               aria-label="各检查点验证成功率随训练步数变化"
             ></svg>
             <p>
-              每个检查点使用相同的 8 个验证场景；最终验收使用另外 100
-              个种子。失败与退步会原样保留。
+              每个检查点使用 8
+              个验证场景，仅反映当前阶段；训练被停止或尚未完成时不代表最终验收。最终验收使用另外
+              100 个种子。失败与退步会原样保留。
             </p>
           </div>
           <div class="trajectory-panel">

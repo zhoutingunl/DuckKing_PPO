@@ -244,9 +244,14 @@ function render() {
       div.append(value, text, ci);
       results.append(div);
     }
-  } else
+  } else {
     $("acceptance-note").textContent =
-      "训练结束后，对验证集选出的最佳策略分别运行固定布局和随机布局评估。";
+      data.status === "stopped"
+        ? "本次训练在最终验收前被停止；当前阶段的检查点成功率不代表最终任务成功率。"
+        : data.status === "failed"
+          ? "训练或阶段导出失败，未生成最终验收。"
+          : "训练结束后，对验证集选出的最佳策略分别运行固定布局和随机布局评估。";
+  }
 }
 async function poll() {
   if (polling) return;
