@@ -18,6 +18,7 @@ from urllib.parse import unquote, urlparse
 
 from .navigation import NavigationConfig, resolve_assets
 from .navigation_artifacts import read_json, run_summary
+from .playground_runtime import create_session
 
 STATIC = Path(__file__).with_name("web")
 ACTIVE = {"starting", "training", "rendering", "evaluating"}
@@ -87,13 +88,27 @@ class Handler(SimpleHTTPRequestHandler):
                 playground_id = parts[4]
                 if not re.fullmatch(r"[\w.-]+", playground_id):
                     raise ValueError("Invalid playground id")
-                record = confined(run, f"playground/{playground_id}/playground.json")
-                if not record.exists():
-                    worker = self.server.playground_workers.get(playground_id)
-                    if worker is not None and worker.poll() is None:
-                        return self.json_response({"status": "running"})
-                    raise FileNotFoundError("场景回放记录尚未生成")
-                return self.json_response(read_json(record))
+                session = self.server.playground_sessions.get(playground_id)
+                if session is None:
+                    raise FileNotFoundError("场景会话不存在或服务已重启")
+                return self.json_response(session.snapshot())
+            if (
+                len(parts) == 6
+                and parts[:4] == ["api", "runs", parts[2], "playground"]
+                and parts[5] == "frame.jpg"
+            ):
+                session = self.server.playground_sessions.get(parts[4])
+                if session is None or not session.frame_bytes():
+                    self.send_error(404)
+                    return
+                data = session.frame_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(data)
+                return
             if len(parts) >= 3 and parts[0] == "artifacts":
                 run = self.run_path(parts[1])
                 path = confined(run, "/".join(parts[2:]))
@@ -220,32 +235,9 @@ class Handler(SimpleHTTPRequestHandler):
                 stage_policy = confined(run, f"{stage}/policy.zip")
                 if not stage_policy.is_file():
                     raise ValueError("所选策略还没有生成")
-                playground_id = time.strftime("play-%H%M%S-") + uuid.uuid4().hex[:5]
-                output = confined(run, f"playground/{playground_id}")
-                output.mkdir(parents=True)
-                with (output / "worker.log").open("w") as log:
-                    self.server.playground_workers[playground_id] = subprocess.Popen(
-                        [
-                            sys.executable,
-                            "-m",
-                            "microduck_ppo.playground",
-                            "--run",
-                            str(run),
-                            "--stage",
-                            stage,
-                            "--output",
-                            str(output),
-                            "--start",
-                            *map(str, start),
-                            "--goal",
-                            *map(str, goal),
-                            "--yaw",
-                            str(yaw),
-                        ],
-                        stdout=log,
-                        stderr=log,
-                    )
-                return self.json_response({"id": playground_id}, 202)
+                session = create_session(run, stage, start, goal, yaw)
+                self.server.playground_sessions[session.id] = session
+                return self.json_response({"id": session.id}, 202)
             if len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "stop":
                 run = self.run_path(parts[2])
                 manifest = read_json(run / "run.json")
@@ -264,7 +256,7 @@ def make_server(root, port=8780):
     server = ThreadingHTTPServer(("127.0.0.1", port), partial(Handler, runs_root=root))
     server.launch_lock = threading.Lock()
     server.learner = None
-    server.playground_workers = {}
+    server.playground_sessions = {}
     return server
 
 

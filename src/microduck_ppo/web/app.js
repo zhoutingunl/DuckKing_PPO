@@ -364,14 +364,22 @@ $("play-run").onclick = async () => {
       const record = await api(
         `/api/runs/${encodeURIComponent(runId)}/playground/${encodeURIComponent(playgroundId)}`,
       );
-      if (record.status === "running") return setTimeout(wait, 1000);
+      if (["starting", "running"].includes(record.status)) {
+        $("play-frame").src =
+          `${url(`playground/${playgroundId}/frame.jpg`)}?seq=${record.frame_seq}`;
+        const info = record.info || {};
+        $("play-result-title").textContent =
+          `实时仿真中 · ${info.time == null ? "0.0" : info.time.toFixed(1)} 秒`;
+        $("play-result-meta").textContent =
+          `当前距离 ${(info.distance || 0).toFixed(3)} 米 · 画面每 0.1 秒更新`;
+        $("play-result").hidden = false;
+        return setTimeout(wait, 100);
+      }
       if (record.status !== "ready")
         throw Error(record.error || "场景回放失败");
-      const video = $("play-video");
-      video.src = url(`playground/${playgroundId}/rollout.mp4`);
-      video.poster = url(`playground/${playgroundId}/poster.jpg`);
-      video.load();
-      const outcome = record.showcase.outcome;
+      $("play-frame").src =
+        `${url(`playground/${playgroundId}/frame.jpg`)}?seq=${record.frame_seq}`;
+      const outcome = record.info;
       $("play-result-title").textContent = outcome.is_success
         ? "抵达了你放置的目标"
         : outcome.failure_reason === "fall"

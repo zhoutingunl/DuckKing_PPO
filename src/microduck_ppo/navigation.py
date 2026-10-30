@@ -92,6 +92,17 @@ class NavigationEnv(gym.Env):
             pos=[0.5, 0, 0.004],
             rgba=[0.05, 0.38, 0.88, 0.6],
         )
+        # A real zero-height circular carpet is rendered in MuJoCo and moved with
+        # the user-selected goal. The site above remains a compact sensor marker.
+        spec.worldbody.add_geom(
+            name="navigation_goal_carpet",
+            type=mujoco.mjtGeom.mjGEOM_CYLINDER,
+            size=[self.config.goal_radius, 0.0015, 0],
+            pos=[0.5, 0, 0.0015],
+            rgba=[0.05, 0.38, 0.88, 0.72],
+            contype=0,
+            conaffinity=0,
+        )
         spec.worldbody.add_light(pos=[0, 0, 3], dir=[0, 0, -1], diffuse=[0.8, 0.8, 0.8])
         self.model = spec.compile()
         self.model.opt.timestep = 0.005
@@ -106,6 +117,7 @@ class NavigationEnv(gym.Env):
         self.body = self.model.body("trunk_base").id
         self.gyro = int(self.model.sensor_adr[self.model.sensor("imu_ang_vel").id])
         self.goal_site = self.model.site("navigation_goal").id
+        self.goal_geom = self.model.geom("navigation_goal_carpet").id
         options = ort.SessionOptions()
         options.intra_op_num_threads = options.inter_op_num_threads = 1
         self.gait = ort.InferenceSession(str(gait), options, providers=["CPUExecutionProvider"])
@@ -208,6 +220,7 @@ class NavigationEnv(gym.Env):
         self.start_yaw = yaw
         self.goal[:] = goal
         self.model.site_pos[self.goal_site, :2] = self.goal
+        self.model.geom_pos[self.goal_geom, :2] = self.goal
         mujoco.mj_forward(self.model, self.data)
         self.steps = 0
         self.hold = 0

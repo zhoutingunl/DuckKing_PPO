@@ -15,9 +15,9 @@ uv run microduck-viewer --port 8780
 uv run microduck-navigation --timesteps 100000 --envs 4 --output runs/navigation-example
 ```
 
-训练记录完成后，页面的“观众实验”允许拖动橙色小鸭和蓝色目标，设置初始朝向，并选择 0 步、约 10K、20K、30K ……或最终检查点。点击“运行这个场景”会启动一次隔离的本地 MuJoCo 回放；它使用你放置的起点、目标和朝向，不改变训练数据。回放完成后显示抵达、摔倒或超时，并可继续换位置、换策略体验。
+训练记录完成后，页面的“观众实验”允许拖动橙色 3D 小鸭和蓝色零高度圆形地毯，设置初始朝向，并选择 0 步、约 10K、20K、30K ……或最终检查点。点击“运行这个场景”会启动一段实时的本地 MuJoCo 仿真；浏览器每 0.1 秒接收当前帧和状态，不生成观众回放 MP4。仿真结束后显示抵达、摔倒或超时，可以继续拖动位置、换策略并重复运行。
 
-这不是把小鸭瞬移到画面上：起点和目标会传入 `NavigationEnv.reset(options=...)`，动作仍由选中 PPO 策略通过冻结步态和 14 个关节执行。网页只监听 `127.0.0.1`，场景回放写入选定训练目录的 `playground/`。
+这不是把小鸭瞬移到画面上：起点和目标会传入 `NavigationEnv.reset(options=...)`，蓝色地毯是 MuJoCo 中的真实零高度圆柱几何，动作仍由选中 PPO 策略通过冻结步态和 14 个关节执行。实时会话只保存在网页服务进程内存中，服务重启后结束；网页只监听 `127.0.0.1`。训练阶段的历史 MP4 仍保存在 `stages/`，用于学习过程对照。
 
 默认从相邻 `../DuckKing/external/` 发现官方模型和步态。其他路径可通过 `--robot-xml`、`--gait-policy` 或环境变量 `MICRODUCK_ROBOT_XML`、`MICRODUCK_GAIT_POLICY` 指定。官方资产和原策略来源为 [Pollen Robotics microduck_rl](https://github.com/pollen-robotics/microduck_rl)，控制接口参考 DuckKing `simulation.Driver`；资产不复制到本仓库。
 

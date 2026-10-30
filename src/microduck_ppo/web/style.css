@@ -263,6 +263,26 @@ button:disabled {
   max-height: 280px;
   background: #b8c5ce;
 }
+.live-screen {
+  position: relative;
+  background: #b8c5ce;
+  min-height: 180px;
+}
+.live-screen img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.live-screen #live-badge {
+  position: absolute;
+  top: 9px;
+  left: 9px;
+  color: white;
+  background: #a83534;
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 11px;
+}
 .play-result b,
 .play-result span {
   display: block;

@@ -111,12 +111,12 @@
           </svg>
         </div>
         <div class="play-result" id="play-result" hidden>
-          <video
-            id="play-video"
-            controls
-            playsinline
-            preload="metadata"
-          ></video>
+          <div class="live-screen">
+            <img id="play-frame" alt="实时 MuJoCo 仿真画面" /><span
+              id="live-badge"
+              >LIVE · MuJoCo</span
+            >
+          </div>
           <div>
             <b id="play-result-title"></b><span id="play-result-meta"></span>
           </div>
@@ -216,7 +216,8 @@
             <p>
               每个检查点使用 8
               个验证场景，仅反映当前阶段；训练被停止或尚未完成时不代表最终验收。最终验收使用另外
-              100 个种子。失败与退步会原样保留。
+              100 个种子。失败与退步会原样保留。观众实验使用实时 MuJoCo
+              帧，不生成新的回放视频。
             </p>
           </div>
           <div class="trajectory-panel">
