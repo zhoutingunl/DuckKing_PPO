@@ -135,7 +135,10 @@ def train(args):
     if args.timesteps < 1 or args.envs < 1 or args.checkpoint_every < 1 or args.eval_episodes < 1:
         raise ValueError("Training/evaluation budgets and environment count must be positive")
     config = NavigationConfig(
-        robot_xml=args.robot_xml, gait_policy=args.gait_policy, episode_seconds=args.episode_seconds
+        robot_xml=args.robot_xml,
+        gait_policy=args.gait_policy,
+        episode_seconds=args.episode_seconds,
+        reward_mode=args.reward_mode,
     )
     robot, gait = resolve_assets(config)
     config = NavigationConfig(
@@ -267,7 +270,9 @@ def train(args):
 
 
 def benchmark(args):
-    config = NavigationConfig(robot_xml=args.robot_xml, gait_policy=args.gait_policy)
+    config = NavigationConfig(
+        robot_xml=args.robot_xml, gait_policy=args.gait_policy, reward_mode=args.reward_mode
+    )
     results = []
     for count in args.benchmark_envs:
         started = time.perf_counter()
@@ -305,6 +310,12 @@ def main():
     parser.add_argument("--n-steps", type=int, default=256)
     parser.add_argument("--checkpoint-every", type=int, default=10_000)
     parser.add_argument("--episode-seconds", type=float, default=12)
+    parser.add_argument(
+        "--reward-mode",
+        choices=["distance", "direct"],
+        default="distance",
+        help="导航目标函数：距离优先，或鼓励面向目标正向接近",
+    )
     parser.add_argument("--eval-episodes", type=int, default=100)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--robot-xml")

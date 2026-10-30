@@ -41,6 +41,12 @@
             <option value="4" selected>4 个</option>
           </select></label
         >
+        <label
+          >目标函数<select id="reward-mode">
+            <option value="distance" selected>距离优先</option>
+            <option value="direct">正面接近</option>
+          </select></label
+        >
         <button id="start">开始新训练</button
         ><button id="stop" class="quiet" disabled>停止并保留记录</button
         ><span id="message" role="status"></span>
@@ -72,6 +78,11 @@
               /><output id="play-yaw-value">0°</output></label
             >
             <button id="play-run" disabled>运行这个场景</button>
+          </div>
+          <div class="reward-card" id="reward-card">
+            <b>当前目标函数：<span id="reward-name">距离优先</span></b>
+            <p id="reward-formula">距离进步 + 成功奖励 − 动作变化 − 摔倒/越界惩罚</p>
+            <small>把鼠标移到参数上可查看含义；切换实验记录即可比较两种目标函数。</small>
           </div>
           <p id="play-message" class="play-message" role="status">
             先选择一个已完成的训练记录。
@@ -117,9 +128,24 @@
               id="live-badge"
               >LIVE · MuJoCo</span
             >
+            <div class="camera-help">拖动画面旋转 · 滚轮缩放</div>
+            <div class="camera-controls" aria-label="调整仿真视角">
+              <button id="camera-reset" class="quiet" type="button">复位视角</button>
+              <span id="camera-readout">视角 135° · -45° · 1.6×</span>
+            </div>
           </div>
           <div>
             <b id="play-result-title"></b><span id="play-result-meta"></span>
+            <div id="play-reward" class="play-reward" hidden>
+              <b>当前目标函数</b>
+              <span id="play-reward-mode"></span>
+              <div class="reward-breakdown">
+                <span title="本步距离减少带来的奖励">距离进步 <b id="reward-progress">—</b></span>
+                <span title="朝向目标改善带来的奖励">朝向改善 <b id="reward-heading">—</b></span>
+                <span title="面向目标正向移动带来的奖励">正向接近 <b id="reward-approach">—</b></span>
+                <span title="面向目标倒退时的惩罚">倒退惩罚 <b id="reward-reverse">—</b></span>
+              </div>
+            </div>
           </div>
         </div>
       </section>

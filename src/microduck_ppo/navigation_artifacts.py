@@ -47,13 +47,30 @@ def evaluate(model, env, seeds, *, fixed=False):
         )
         obs, _ = env.reset(seed=seed, options=options)
         total = 0
+        reverse_steps = 0
+        action_steps = 0
+        heading_alignment_at_goal = None
         for _ in range(math.ceil(env.config.episode_seconds / env.config.control_interval)):
             action, _ = model.predict(obs, deterministic=True)
+            action = np.asarray(action, dtype=np.float32)
+            action_steps += 1
             obs, reward, terminated, truncated, info = env.step(action)
+            if float(action[0]) < 0:
+                reverse_steps += 1
+            if info.get("is_success"):
+                heading_alignment_at_goal = float(info.get("heading_alignment", 0.0))
             total += reward
             if terminated or truncated:
                 break
-        outcomes.append({"seed": int(seed), "return": float(total), **info})
+        outcomes.append(
+            {
+                "seed": int(seed),
+                "return": float(total),
+                "reverse_steps_ratio": reverse_steps / max(action_steps, 1),
+                "heading_alignment_at_goal": heading_alignment_at_goal,
+                **info,
+            }
+        )
     successes = sum(row["is_success"] for row in outcomes)
     n = len(outcomes)
     p = successes / n
@@ -69,6 +86,18 @@ def evaluate(model, env, seeds, *, fixed=False):
         "mean_distance": float(np.mean([r["distance"] for r in outcomes])),
         "fall_rate": sum(r["fallen"] for r in outcomes) / n,
         "timeout_rate": sum(r["failure_reason"] == "timeout" for r in outcomes) / n,
+        "reverse_steps_ratio": float(np.mean([r["reverse_steps_ratio"] for r in outcomes])),
+        "mean_heading_alignment_at_goal": float(
+            np.mean(
+                [
+                    r["heading_alignment_at_goal"]
+                    for r in outcomes
+                    if r["heading_alignment_at_goal"] is not None
+                ]
+            )
+            if any(r["heading_alignment_at_goal"] is not None for r in outcomes)
+            else 0.0
+        ),
         "mean_sim_seconds": float(np.mean([r["time"] for r in outcomes])),
         "outcomes": outcomes,
     }

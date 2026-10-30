@@ -33,6 +33,10 @@ class PlaygroundSession:
         self.started = time.perf_counter()
         self.finished = None
         self.lock = threading.Lock()
+        # Camera is viewer state only. It never changes the MuJoCo world or
+        # the policy observation, so moving the view cannot move the target.
+        self.camera = {"azimuth": 135.0, "elevation": -45.0, "distance": 1.6}
+        self.camera_home = dict(self.camera)
         self.thread = threading.Thread(
             target=self._run, name=f"microduck-play-{session_id}", daemon=True
         )
@@ -42,6 +46,9 @@ class PlaygroundSession:
         return self
 
     def _publish(self, env):
+        with self.lock:
+            camera = dict(self.camera)
+        env.set_camera(**camera)
         frame = env.render()
         if frame is None:
             return
@@ -67,6 +74,12 @@ class PlaygroundSession:
                 options={"start": self.start, "goal": self.goal, "yaw": self.yaw},
             )
             with self.lock:
+                self.camera_home = {
+                    "azimuth": env.camera_azimuth,
+                    "elevation": env.camera_elevation,
+                    "distance": env.camera_distance,
+                }
+                self.camera = dict(self.camera_home)
                 self.status = "running"
                 self.info = dict(info)
             self._publish(env)
@@ -103,6 +116,7 @@ class PlaygroundSession:
                 "yaw": self.yaw,
                 "frame_seq": self.frame_seq,
                 "info": dict(self.info),
+                "camera": dict(self.camera),
                 "error": self.error,
                 "elapsed_seconds": (self.finished or time.perf_counter()) - self.started,
             }
@@ -110,6 +124,24 @@ class PlaygroundSession:
     def frame_bytes(self):
         with self.lock:
             return self.frame
+
+    def update_camera(self, *, azimuth=None, elevation=None, distance=None, reset=False):
+        """Update viewer camera state; values are clamped by NavigationEnv."""
+        with self.lock:
+            if reset:
+                self.camera = dict(self.camera_home)
+            for key, value in (
+                ("azimuth", azimuth),
+                ("elevation", elevation),
+                ("distance", distance),
+            ):
+                if value is None:
+                    continue
+                value = float(value)
+                if not np.isfinite(value):
+                    raise ValueError(f"camera {key} must be finite")
+                self.camera[key] = value
+            return dict(self.camera)
 
 
 def create_session(run, stage, start, goal, yaw):

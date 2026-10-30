@@ -272,6 +272,12 @@ button:disabled {
   width: 100%;
   height: auto;
   display: block;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.live-screen img.dragging {
+  cursor: grabbing;
 }
 .live-screen #live-badge {
   position: absolute;
@@ -282,6 +288,74 @@ button:disabled {
   border-radius: 4px;
   padding: 2px 7px;
   font-size: 11px;
+}
+.camera-help {
+  position: absolute;
+  right: 9px;
+  top: 9px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  color: white;
+  background: #203d50cc;
+  font-size: 11px;
+  pointer-events: none;
+}
+.camera-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: absolute;
+  left: 9px;
+  bottom: 9px;
+  color: white;
+  font-size: 11px;
+}
+.camera-controls button {
+  padding: 3px 8px;
+  font-size: 11px;
+  background: #ffffffee;
+}
+.play-reward {
+  margin-top: 17px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--blue);
+  background: #f4f8fa;
+  font-size: 12px;
+}
+.play-reward > b {
+  display: block;
+}
+.play-reward > span {
+  margin-top: 4px;
+}
+.reward-breakdown {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px 12px;
+  margin-top: 8px;
+}
+.reward-breakdown span {
+  margin: 0;
+  font-size: 11px;
+}
+.reward-breakdown b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.reward-card {
+  margin-top: 14px;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #f9fbfc;
+  font-size: 12px;
+}
+.reward-card p {
+  margin: 3px 0;
+  color: var(--blue);
+}
+.reward-card small {
+  color: var(--muted);
 }
 .play-result b,
 .play-result span {

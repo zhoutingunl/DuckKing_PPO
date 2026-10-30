@@ -34,6 +34,7 @@ class NavigationConfig:
     control_interval: float = 0.1
     max_speed: float = 0.25
     max_yaw_rate: float = 1.5
+    reward_mode: str = "distance"
 
     def __post_init__(self):
         if not (0 < self.distance_min <= self.distance_max < 1.5):
@@ -44,6 +45,8 @@ class NavigationConfig:
             raise ValueError("control_interval must be a positive multiple of 0.02")
         if self.episode_seconds <= 0 or self.goal_radius <= 0 or self.goal_hold_seconds <= 0:
             raise ValueError("Episode duration, goal radius and hold time must be positive")
+        if self.reward_mode not in {"distance", "direct"}:
+            raise ValueError("reward_mode must be distance or direct")
 
 
 def resolve_assets(config: NavigationConfig) -> tuple[Path, Path]:
@@ -124,10 +127,15 @@ class NavigationEnv(gym.Env):
         self.gait_input = self.gait.get_inputs()[0].name
         self.last_joint_action = np.zeros(14, dtype=np.float32)
         self.last_action = np.zeros(2, dtype=np.float32)
+        self._last_heading_alignment = 1.0
         self.command = np.zeros(13, dtype=np.float32)
         self.goal = np.zeros(2)
         self.start = np.zeros(2)
         self.start_yaw = 0.0
+        self.camera_azimuth = 135.0
+        self.camera_elevation = -45.0
+        self.camera_distance = 1.6
+        self.camera_lookat = np.array([0.0, 0.0, 0.08], dtype=np.float64)
         self.steps = 0
         self.hold = 0.0
         self._renderer = None
@@ -219,8 +227,13 @@ class NavigationEnv(gym.Env):
         self.start[:] = start
         self.start_yaw = yaw
         self.goal[:] = goal
+        self._last_heading_alignment = self._heading_alignment()
         self.model.site_pos[self.goal_site, :2] = self.goal
         self.model.geom_pos[self.goal_geom, :2] = self.goal
+        self.camera_lookat[:2] = (self.start + self.goal) * 0.5
+        self.camera_distance = float(
+            np.clip(0.95 + 1.55 * np.linalg.norm(self.goal - self.start), 1.15, 2.7)
+        )
         mujoco.mj_forward(self.model, self.data)
         self.steps = 0
         self.hold = 0
@@ -240,6 +253,30 @@ class NavigationEnv(gym.Env):
             "start_yaw": float(self.start_yaw),
             "time": self.steps * self.config.control_interval,
         }
+
+    def set_camera(self, *, azimuth=None, elevation=None, distance=None):
+        if azimuth is not None:
+            self.camera_azimuth = float(azimuth) % 360.0
+        if elevation is not None:
+            self.camera_elevation = float(np.clip(elevation, -80.0, -10.0))
+        if distance is not None:
+            self.camera_distance = float(np.clip(distance, 0.5, 4.0))
+
+    def _heading_alignment(self, xy=None):
+        xy = self.data.qpos[self.root : self.root + 2] if xy is None else xy
+        delta = self.goal - xy
+        norm = float(np.linalg.norm(delta))
+        if norm < 1e-8:
+            return 1.0
+        yaw = math.atan2(
+            2
+            * (
+                self.data.qpos[self.root + 3] * self.data.qpos[self.root + 6]
+                + self.data.qpos[self.root + 4] * self.data.qpos[self.root + 5]
+            ),
+            1 - 2 * (self.data.qpos[self.root + 5] ** 2 + self.data.qpos[self.root + 6] ** 2),
+        )
+        return float(np.clip(np.dot([math.cos(yaw), math.sin(yaw)], delta / norm), -1.0, 1.0))
 
     def step(self, action):
         action = np.asarray(action, dtype=np.float32)
@@ -263,13 +300,45 @@ class NavigationEnv(gym.Env):
         )
         success = self.hold + 1e-8 >= self.config.goal_hold_seconds
         timeout = info["time"] + 1e-8 >= self.config.episode_seconds
-        reward = (
-            30 * (before - info["distance"])
-            - 0.015
-            - 0.005 * float(np.mean((action - self.last_action) ** 2))
-            + (10 if success else 0)
-            - (5 if fallen or boundary else 0)
-        )
+        heading_alignment = self._heading_alignment()
+        if self.config.reward_mode == "direct":
+            # Reward approaching while facing the target. Backward motion while
+            # already facing the target is explicitly costly, which removes the
+            # easy exploit of reversing into the carpet.
+            progress = before - info["distance"]
+            approach = max(0.0, float(action[0])) * max(0.0, heading_alignment)
+            reverse = max(0.0, -float(action[0])) * max(0.0, heading_alignment)
+            reward = (
+                30 * progress
+                + 0.8 * (heading_alignment - self._last_heading_alignment)
+                + 0.10 * approach
+                - 0.35 * reverse
+                - 0.015
+                - 0.005 * float(np.mean((action - self.last_action) ** 2))
+                + (10 if success else 0)
+                - (5 if fallen or boundary else 0)
+            )
+            info.update(
+                reward_progress=float(30 * progress),
+                reward_heading=float(0.8 * (heading_alignment - self._last_heading_alignment)),
+                reward_approach=float(0.10 * approach),
+                reward_reverse=float(-0.35 * reverse),
+            )
+        else:
+            reward = (
+                30 * (before - info["distance"])
+                - 0.015
+                - 0.005 * float(np.mean((action - self.last_action) ** 2))
+                + (10 if success else 0)
+                - (5 if fallen or boundary else 0)
+            )
+            info.update(
+                reward_progress=float(30 * (before - info["distance"])),
+                reward_heading=0.0,
+                reward_approach=0.0,
+                reward_reverse=0.0,
+            )
+        self._last_heading_alignment = heading_alignment
         self.last_action[:] = action
         info.update(
             is_success=bool(success),
@@ -282,6 +351,8 @@ class NavigationEnv(gym.Env):
             if timeout and not success
             else "",
             hold_seconds=float(self.hold),
+            reward_mode=self.config.reward_mode,
+            heading_alignment=float(heading_alignment),
         )
         return (
             self._observe(),
@@ -301,12 +372,9 @@ class NavigationEnv(gym.Env):
         camera = mujoco.MjvCamera()
         # A close oblique view makes the official MicroDuck mesh and carpet
         # legible while retaining enough floor to see the route.
-        xy = self.data.qpos[self.root : self.root + 2]
-        midpoint = (xy + self.goal) * 0.5
-        separation = float(np.linalg.norm(self.goal - xy))
-        camera.lookat[:] = [midpoint[0], midpoint[1], 0.08]
-        camera.distance = float(np.clip(0.95 + 1.55 * separation, 1.15, 2.7))
-        camera.azimuth, camera.elevation = 135, -45
+        camera.lookat[:] = self.camera_lookat
+        camera.distance = self.camera_distance
+        camera.azimuth, camera.elevation = self.camera_azimuth, self.camera_elevation
         option = mujoco.MjvOption()
         option.geomgroup[3] = 0
         self._renderer.update_scene(self.data, camera=camera, scene_option=option)

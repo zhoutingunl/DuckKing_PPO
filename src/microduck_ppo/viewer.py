@@ -66,6 +66,9 @@ class Handler(SimpleHTTPRequestHandler):
                             "status": manifest["status"],
                             "created_at": manifest["created_at"],
                             "timesteps": manifest.get("timesteps", 0),
+                            "reward_mode": manifest.get("config", {}).get(
+                                "reward_mode", "distance"
+                            ),
                         }
                     )
                 return self.json_response(sorted(runs, key=lambda r: r["created_at"], reverse=True))
@@ -168,8 +171,11 @@ class Handler(SimpleHTTPRequestHandler):
                 data = json.loads(self.rfile.read(length))
                 budget = int(data.get("timesteps", 100000))
                 envs = int(data.get("envs", 2))
+                reward_mode = str(data.get("reward_mode", "distance"))
                 if budget not in {10000, 100000, 300000, 1000000} or envs not in {1, 2, 4}:
                     raise ValueError("Unsupported training preset")
+                if reward_mode not in {"distance", "direct"}:
+                    raise ValueError("Unsupported reward mode")
                 resolve_assets(NavigationConfig())
                 with self.server.launch_lock:
                     if self.server.learner and self.server.learner.poll() is None:
@@ -197,6 +203,8 @@ class Handler(SimpleHTTPRequestHandler):
                                 str(budget),
                                 "--envs",
                                 str(envs),
+                                "--reward-mode",
+                                reward_mode,
                             ],
                             stdout=log,
                             stderr=log,
@@ -238,6 +246,25 @@ class Handler(SimpleHTTPRequestHandler):
                 session = create_session(run, stage, start, goal, yaw)
                 self.server.playground_sessions[session.id] = session
                 return self.json_response({"id": session.id}, 202)
+            if (
+                len(parts) == 6
+                and parts[:4] == ["api", "runs", parts[2], "playground"]
+                and parts[5] == "camera"
+            ):
+                length = int(self.headers.get("Content-Length", 0))
+                if length > 4096:
+                    raise ValueError("Request too large")
+                data = json.loads(self.rfile.read(length) or b"{}")
+                session = self.server.playground_sessions.get(parts[4])
+                if session is None:
+                    raise ValueError("场景会话不存在或服务已重启")
+                camera = session.update_camera(
+                    azimuth=data.get("azimuth"),
+                    elevation=data.get("elevation"),
+                    distance=data.get("distance"),
+                    reset=bool(data.get("reset", False)),
+                )
+                return self.json_response({"camera": camera})
             if len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "stop":
                 run = self.run_path(parts[2])
                 manifest = read_json(run / "run.json")

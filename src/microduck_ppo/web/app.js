@@ -20,7 +20,9 @@ let runId = new URLSearchParams(location.search).get("run"),
 let sceneStart = { x: 0, y: 0 },
   sceneGoal = { x: 0.55, y: 0 },
   dragTarget = null,
-  playgroundId = null;
+  playgroundId = null,
+  camera = { azimuth: 135, elevation: -45, distance: 1.6 },
+  cameraDrag = null;
 const fmt = (n) => Number(n).toLocaleString("zh-CN");
 const duration = (seconds) =>
   seconds == null
@@ -226,6 +228,11 @@ function render() {
   );
   $("message").textContent = data.error || "";
   setupPlayground();
+  const rewardMode = data.config?.reward_mode || "distance";
+  $("reward-name").textContent = rewardMode === "direct" ? "正面接近" : "距离优先";
+  $("reward-formula").textContent = rewardMode === "direct"
+    ? "距离进步 + 正面朝向改善 + 正向接近 − 面向目标倒退 − 动作突变 + 成功奖励 − 摔倒/越界"
+    : "距离进步 + 成功奖励 − 动作变化 − 摔倒/越界惩罚";
   const accept = data.acceptance;
   const results = $("acceptance-results");
   results.replaceChildren();
@@ -248,7 +255,10 @@ function render() {
       const ci = document.createElement("div");
       ci.style.fontSize = "11px";
       ci.textContent = `95% 区间 ${(r.success_ci95[0] * 100).toFixed(1)}–${(r.success_ci95[1] * 100).toFixed(1)}%`;
-      div.append(value, text, ci);
+      const quality = document.createElement("div");
+      quality.style.fontSize = "11px";
+      quality.textContent = `正面指标：朝向 ${(r.mean_heading_alignment_at_goal ?? 0).toFixed(2)} · 倒退 ${(r.reverse_steps_ratio * 100).toFixed(1)}%`;
+      div.append(value, text, ci, quality);
       results.append(div);
     }
   } else {
@@ -308,6 +318,37 @@ function setupPlayground() {
     select.value = previous;
   updateSceneMap();
 }
+function updateCameraReadout() {
+  $("camera-readout").textContent =
+    `视角 ${Math.round(camera.azimuth)}° · ${Math.round(camera.elevation)}° · ${camera.distance.toFixed(1)}×`;
+}
+async function sendCamera(payload) {
+  if (!playgroundId) return;
+  try {
+    const result = await api(
+      `/api/runs/${encodeURIComponent(runId)}/playground/${encodeURIComponent(playgroundId)}/camera`,
+      payload,
+    );
+    camera = result.camera;
+    updateCameraReadout();
+  } catch (error) {
+    $("play-message").textContent = error.message;
+  }
+}
+function updateRewardInfo(info) {
+  const panel = $("play-reward");
+  if (!info || info.reward_mode == null) {
+    panel.hidden = true;
+    return;
+  }
+  panel.hidden = false;
+  $("play-reward-mode").textContent = info.reward_mode === "direct"
+    ? "正面接近：鼓励鸭头朝向目标并向前走，面向目标倒退会扣分。"
+    : "距离优先：只按距离进步学习，可能出现倒退进入目标。";
+  for (const [id, key] of [["reward-progress", "reward_progress"], ["reward-heading", "reward_heading"], ["reward-approach", "reward_approach"], ["reward-reverse", "reward_reverse"]]) {
+    $(id).textContent = info[key] == null ? "—" : Number(info[key]).toFixed(3);
+  }
+}
 function svgPoint(event) {
   const svg = $("scene-map"),
     rect = svg.getBoundingClientRect();
@@ -362,6 +403,8 @@ $("play-run").onclick = async () => {
       },
     );
     playgroundId = result.id;
+    camera = { azimuth: 135, elevation: -45, distance: 1.6 };
+    updateCameraReadout();
     const wait = async () => {
       const record = await api(
         `/api/runs/${encodeURIComponent(runId)}/playground/${encodeURIComponent(playgroundId)}`,
@@ -370,6 +413,9 @@ $("play-run").onclick = async () => {
         $("play-frame").src =
           `${playgroundUrl(playgroundId, "/frame.jpg")}?seq=${record.frame_seq}`;
         const info = record.info || {};
+        if (record.camera) camera = record.camera;
+        updateCameraReadout();
+        updateRewardInfo(info);
         $("play-result-title").textContent =
           `实时仿真中 · ${info.time == null ? "0.0" : info.time.toFixed(1)} 秒`;
         $("play-result-meta").textContent =
@@ -382,6 +428,9 @@ $("play-run").onclick = async () => {
       $("play-frame").src =
         `${playgroundUrl(playgroundId, "/frame.jpg")}?seq=${record.frame_seq}`;
       const outcome = record.info;
+      if (record.camera) camera = record.camera;
+      updateCameraReadout();
+      updateRewardInfo(outcome);
       $("play-result-title").textContent = outcome.is_success
         ? "抵达了你放置的目标"
         : outcome.failure_reason === "fall"
@@ -400,6 +449,37 @@ $("play-run").onclick = async () => {
     updateSceneMap();
   }
 };
+$("play-frame").addEventListener("pointerdown", (event) => {
+  if (!playgroundId) return;
+  cameraDrag = { x: event.clientX, y: event.clientY };
+  event.currentTarget.setPointerCapture(event.pointerId);
+  event.currentTarget.classList.add("dragging");
+});
+$("play-frame").addEventListener("pointermove", (event) => {
+  if (!cameraDrag) return;
+  const dx = event.clientX - cameraDrag.x;
+  const dy = event.clientY - cameraDrag.y;
+  cameraDrag = { x: event.clientX, y: event.clientY };
+  camera.azimuth = (camera.azimuth + dx * 0.65 + 360) % 360;
+  camera.elevation = Math.max(-80, Math.min(-10, camera.elevation - dy * 0.45));
+  updateCameraReadout();
+  clearTimeout(window.cameraTimer);
+  window.cameraTimer = setTimeout(() => sendCamera(camera), 30);
+});
+$("play-frame").addEventListener("pointerup", (event) => {
+  cameraDrag = null;
+  event.currentTarget.classList.remove("dragging");
+});
+$("play-frame").addEventListener("pointercancel", () => { cameraDrag = null; });
+$("play-frame").addEventListener("wheel", (event) => {
+  if (!playgroundId) return;
+  event.preventDefault();
+  camera.distance = Math.max(0.5, Math.min(4, camera.distance * Math.exp(event.deltaY * 0.001)));
+  updateCameraReadout();
+  clearTimeout(window.cameraTimer);
+  window.cameraTimer = setTimeout(() => sendCamera(camera), 30);
+}, { passive: false });
+$("camera-reset").onclick = () => sendCamera({ reset: true });
 async function poll() {
   if (polling) return;
   polling = true;
@@ -410,7 +490,8 @@ async function poll() {
       ...runs.map((r) => {
         const o = document.createElement("option");
         o.value = r.id;
-        o.textContent = `${r.id} · ${statuses[r.status] || r.status}`;
+        const rewardLabel = r.reward_mode === "direct" ? "正面接近" : "距离优先";
+        o.textContent = `${r.id} · ${rewardLabel} · ${statuses[r.status] || r.status}`;
         return o;
       }),
     );
@@ -471,6 +552,7 @@ $("start").onclick = async () => {
     const r = await api("/api/train", {
       timesteps: Number($("budget").value),
       envs: Number($("envs").value),
+      reward_mode: $("reward-mode").value,
     });
     runId = r.id;
     $("follow").checked = true;
