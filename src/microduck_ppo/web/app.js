@@ -1,4 +1,4 @@
-import { createMicroDuck3D } from './microduck-3d.js?v=20261031-single-scene-fix2';
+import { createMicroDuck3D } from './microduck-3d.js?v=20261101-mesh-coordinates-fix';
 
 const $ = (id) => document.getElementById(id);
 const statuses = {
