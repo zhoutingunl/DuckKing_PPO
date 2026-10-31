@@ -6,6 +6,7 @@ import io
 import threading
 import time
 import uuid
+from dataclasses import replace
 from pathlib import Path
 
 import imageio.v2 as imageio
@@ -15,6 +16,9 @@ from stable_baselines3 import PPO
 
 from .navigation import NavigationConfig, NavigationEnv
 from .navigation_artifacts import read_json
+
+PLAYGROUND_WORLD_LIMIT = 3.0
+PLAYGROUND_EPISODE_SECONDS = 20.0
 
 
 class PlaygroundSession:
@@ -65,6 +69,17 @@ class PlaygroundSession:
         try:
             manifest = read_json(self.run / "run.json")
             config = NavigationConfig(**manifest["config"])
+            # The policy was trained on 0.35–0.65 m routes.  The audience
+            # playground deliberately runs a larger, 20 s world so a hand
+            # placed scene is a visible generalization test.  This does not
+            # alter the recorded training configuration or its evaluation.
+            config = replace(
+                config,
+                episode_seconds=max(PLAYGROUND_EPISODE_SECONDS, config.episode_seconds),
+                world_limit=max(PLAYGROUND_WORLD_LIMIT, config.world_limit),
+                boundary_radius=max(3.5, config.boundary_radius),
+                floor_half_extent=max(4.0, config.floor_half_extent),
+            )
             policy = (self.run / self.stage / "policy.zip").resolve()
             if not policy.is_file() or not policy.is_relative_to(self.run.resolve()):
                 raise FileNotFoundError("Selected checkpoint policy is not ready")
@@ -87,15 +102,40 @@ class PlaygroundSession:
                 self.status = "running"
                 self.info = dict(info)
             self._publish(env)
-            for _ in range(round(config.episode_seconds / config.control_interval)):
+            reached = False
+            for frame_index in range(round(config.episode_seconds / config.control_interval)):
                 loop_started = time.perf_counter()
-                action, _ = model.predict(obs, deterministic=True)
-                obs, reward, terminated, truncated, info = env.step(action)
+                if reached:
+                    # Hold the final pose and keep publishing frames. Calling
+                    # Gymnasium step() after a terminated episode would make
+                    # the replay state ambiguous.
+                    action = np.zeros(2, dtype=np.float32)
+                    reward = 0.0
+                    terminated = truncated = False
+                    info = {
+                        **info,
+                        "time": (frame_index + 1) * config.control_interval,
+                        "is_success": True,
+                        "failure_reason": "",
+                    }
+                else:
+                    action, _ = model.predict(obs, deterministic=True)
+                    obs, reward, terminated, truncated, info = env.step(action)
+                    if info.get("is_success"):
+                        reached = True
+                        # A short hand-placed route remains visible for the
+                        # complete 20 s demo after arrival.
+                        info = {
+                            **info,
+                            "time": (frame_index + 1) * config.control_interval,
+                            "is_success": True,
+                            "failure_reason": "",
+                        }
                 self._publish(env)
                 with self.lock:
                     self.info = {**info, "reward": float(reward)}
                     self.visual_state = env.visual_state()
-                if terminated or truncated:
+                if (terminated or truncated) and not reached:
                     break
                 time.sleep(max(0, config.control_interval - (time.perf_counter() - loop_started)))
             with self.lock:

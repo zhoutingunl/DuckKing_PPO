@@ -19,8 +19,10 @@ let runId = new URLSearchParams(location.search).get("run"),
   initialRows = [],
   currentRows = [],
   polling = false;
-let sceneStart = { x: 0, y: 0 },
-  sceneGoal = { x: 0.55, y: 0 },
+let sceneStart = { x: -1.4, y: 0 },
+  // Start with a long route so the first audience click visibly exercises the
+  // 20 s generalization demo. Users can drag either marker to any position.
+  sceneGoal = { x: 1.4, y: 0 },
   dragTarget = null,
   playgroundId = null,
   camera = { azimuth: 135, elevation: -45, distance: 1.6 },
@@ -330,15 +332,15 @@ function renderRewardFormula(mode) {
   });
 }
 function mapToWorld(x, y) {
-  return { x: ((x - 260) / 200) * 1.2, y: ((150 - y) / 110) * 1.2 };
+  return { x: ((x - 260) / 200) * 3.0, y: ((150 - y) / 110) * 3.0 };
 }
 function worldToMap(point) {
-  return { x: 260 + (point.x / 1.2) * 200, y: 150 - (point.y / 1.2) * 110 };
+  return { x: 260 + (point.x / 3.0) * 200, y: 150 - (point.y / 3.0) * 110 };
 }
 function clampScene(point) {
   return {
-    x: Math.max(-1.1, Math.min(1.1, point.x)),
-    y: Math.max(-1.1, Math.min(1.1, point.y)),
+    x: Math.max(-3.0, Math.min(3.0, point.x)),
+    y: Math.max(-3.0, Math.min(3.0, point.y)),
   };
 }
 function updateSceneMap() {
@@ -350,14 +352,15 @@ function updateSceneMap() {
   $("scene-coords").textContent =
     `起点 (${sceneStart.x.toFixed(2)}, ${sceneStart.y.toFixed(2)}) · 目标 (${sceneGoal.x.toFixed(2)}, ${sceneGoal.y.toFixed(2)}) · 距离 ${Math.hypot(sceneGoal.x - sceneStart.x, sceneGoal.y - sceneStart.y).toFixed(2)} m`;
   const sceneDistance = Math.hypot(sceneGoal.x - sceneStart.x, sceneGoal.y - sceneStart.y);
-  const valid = sceneDistance >= 0.1 && sceneDistance <= 1.1;
+  const valid = sceneDistance >= 0.1 && sceneDistance <= 8.5;
   $("play-run").disabled =
     !data ||
     !["passed", "unqualified", "stopped"].includes(data.status) ||
     !valid ||
     !$("play-stage").value;
   if (sceneDistance < 0.1) $("play-message").textContent = "起点和目标至少相距 0.1 米。";
-  else if (sceneDistance > 0.65) $("play-message").textContent = "当前场景超出训练距离分布（0.65m），将作为泛化测试运行。";
+  else if (sceneDistance > 0.65) $("play-message").textContent = "当前场景超出训练距离分布（0.65m），将作为 20 秒泛化测试运行。";
+  else if (data && $("play-stage").value) $("play-message").textContent = "可以运行当前场景。";
 }
 function setupPlayground() {
   const select = $("play-stage"),

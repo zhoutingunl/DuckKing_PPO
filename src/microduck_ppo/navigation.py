@@ -36,6 +36,11 @@ class NavigationConfig:
     max_speed: float = 0.25
     max_yaw_rate: float = 1.5
     reward_mode: str = "distance"
+    # Training keeps its 0.35–0.65 m curriculum. The viewer can override
+    # these bounds for a long, out-of-distribution audience route.
+    world_limit: float = 1.2
+    boundary_radius: float = 1.8
+    floor_half_extent: float = 3.0
 
     def __post_init__(self):
         if not (0 < self.distance_min <= self.distance_max < 1.5):
@@ -48,6 +53,12 @@ class NavigationConfig:
             raise ValueError("Episode duration, goal radius and hold time must be positive")
         if self.reward_mode not in {"distance", "direct"}:
             raise ValueError("reward_mode must be distance or direct")
+        if not (0.65 <= self.world_limit <= 3.0):
+            raise ValueError("world_limit must be in [0.65, 3.0]")
+        if self.boundary_radius <= self.world_limit or self.boundary_radius > 5.0:
+            raise ValueError("boundary_radius must exceed world_limit and be <= 5")
+        if self.floor_half_extent < self.world_limit or self.floor_half_extent > 5.0:
+            raise ValueError("floor_half_extent must cover world_limit and be <= 5")
 
 
 def resolve_assets(config: NavigationConfig) -> tuple[Path, Path]:
@@ -85,7 +96,7 @@ class NavigationEnv(gym.Env):
         spec.worldbody.add_geom(
             name="navigation_floor",
             type=mujoco.mjtGeom.mjGEOM_PLANE,
-            size=[3, 3, 0.1],
+            size=[self.config.floor_half_extent, self.config.floor_half_extent, 0.1],
             rgba=[0.72, 0.78, 0.80, 1],
             friction=[1, 0.8, 0.02],
         )
@@ -197,8 +208,15 @@ class NavigationEnv(gym.Env):
         if not np.isfinite(yaw) or abs(yaw) > math.pi:
             raise ValueError("yaw must be a finite angle in [-pi, pi]")
         start = np.asarray(options.get("start", [0.0, 0.0]), dtype=np.float64)
-        if start.shape != (2,) or not np.isfinite(start).all() or np.any(np.abs(start) > 1.2):
-            raise ValueError("start must contain two finite coordinates in [-1.2, 1.2]")
+        if (
+            start.shape != (2,)
+            or not np.isfinite(start).all()
+            or np.any(np.abs(start) > self.config.world_limit)
+        ):
+            raise ValueError(
+                f"start must contain two finite coordinates in [-{self.config.world_limit}, "
+                f"{self.config.world_limit}]"
+            )
         self.data.qpos[self.root : self.root + 7] = [
             start[0],
             start[1],
@@ -223,8 +241,15 @@ class NavigationEnv(gym.Env):
             options.get("goal", [distance * math.cos(bearing), distance * math.sin(bearing)]),
             dtype=np.float64,
         )
-        if goal.shape != (2,) or not np.isfinite(goal).all() or np.any(np.abs(goal) > 1.2):
-            raise ValueError("goal must contain two finite coordinates in [-1.2, 1.2]")
+        if (
+            goal.shape != (2,)
+            or not np.isfinite(goal).all()
+            or np.any(np.abs(goal) > self.config.world_limit)
+        ):
+            raise ValueError(
+                f"goal must contain two finite coordinates in [-{self.config.world_limit}, "
+                f"{self.config.world_limit}]"
+            )
         self.start[:] = start
         self.start_yaw = yaw
         self.goal[:] = goal
@@ -233,7 +258,7 @@ class NavigationEnv(gym.Env):
         self.model.geom_pos[self.goal_geom, :2] = self.goal
         self.camera_lookat[:2] = (self.start + self.goal) * 0.5
         self.camera_distance = float(
-            np.clip(0.95 + 1.55 * np.linalg.norm(self.goal - self.start), 1.15, 2.7)
+            np.clip(0.95 + 1.55 * np.linalg.norm(self.goal - self.start), 1.15, 6.0)
         )
         mujoco.mj_forward(self.model, self.data)
         self.steps = 0
@@ -261,7 +286,7 @@ class NavigationEnv(gym.Env):
         if elevation is not None:
             self.camera_elevation = float(np.clip(elevation, -80.0, -10.0))
         if distance is not None:
-            self.camera_distance = float(np.clip(distance, 0.5, 4.0))
+            self.camera_distance = float(np.clip(distance, 0.5, 8.0))
 
     def visual_model_payload(self):
         """Return the official display meshes in a browser-friendly payload.
@@ -316,7 +341,7 @@ class NavigationEnv(gym.Env):
             "source": "official_microduck_physics",
             "meshes": meshes,
             "geoms": geoms,
-            "floor": {"size": 2.4},
+            "floor": {"size": 2 * self.config.floor_half_extent},
         }
 
     def visual_state(self):
@@ -366,7 +391,10 @@ class NavigationEnv(gym.Env):
         self.steps += 1
         info = self._metrics()
         fallen = info["upright"] < 0.45 or self.data.qpos[self.root + 2] < 0.06
-        boundary = np.linalg.norm(self.data.qpos[self.root : self.root + 2]) > 1.8
+        boundary = (
+            np.linalg.norm(self.data.qpos[self.root : self.root + 2])
+            > self.config.boundary_radius
+        )
         self.hold = (
             self.hold + self.config.control_interval
             if info["distance"] < self.config.goal_radius and not fallen

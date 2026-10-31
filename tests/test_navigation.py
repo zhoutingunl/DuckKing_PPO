@@ -51,6 +51,22 @@ def test_audience_can_place_start_goal_and_yaw(env):
         env.reset(seed=1, options={"start": [2, 0], "goal": [0.2, 0]})
 
 
+def test_long_playground_world_accepts_generalization_route(env):
+    env.config = replace(
+        env.config,
+        world_limit=3.0,
+        boundary_radius=3.5,
+        floor_half_extent=4.0,
+        episode_seconds=20.0,
+    )
+    _, info = env.reset(
+        seed=11,
+        options={"start": [-1.7, 0.0], "goal": [1.7, 0.0], "yaw": 0.0},
+    )
+    assert info["distance"] > 3.0
+    assert env.visual_model_payload()["floor"]["size"] == 8.0
+
+
 def test_three_d_visual_payload_tracks_official_mesh_state(env):
     env.reset(seed=11, options={"start": [0.2, -0.1], "goal": [0.55, 0.0], "yaw": 0.2})
     model = env.visual_model_payload()

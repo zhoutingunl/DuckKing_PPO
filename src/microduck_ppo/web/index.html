@@ -62,7 +62,9 @@
           <p>
             拖动橙色小鸭和蓝色圆形地毯，选择一个训练阶段，再运行同一套 MuJoCo
             策略。右侧画面是真实 3D
-            网格仿真，起点和目标会被写入这次运行，结果不会混入训练集。
+            网格仿真，起点和目标会被写入这次运行，结果不会混入训练集。鸭子约
+            14 cm 宽；步态主周期约 0.4 秒、单脚步幅约 3–4 cm，当前策略有效速度约 0.15–0.18 m/s。
+            场地为 6 × 6 m，默认路线约 3.4 m；每次体验最长 20 秒，短路线抵达后会停在目标处继续展示。
           </p>
           <div class="play-controls">
             <label>使用策略<select id="play-stage"></select></label>
@@ -86,7 +88,7 @@
             <small>切换实验记录即可比较两种目标函数。</small>
           </div>
           <p id="play-message" class="play-message" role="status">
-            先选择一个已完成的训练记录。
+            先选择一个已完成的训练记录。训练路线为 0.35–0.65 m；超过该范围会进入 20 秒泛化演示。
           </p>
         </div>
           <div class="scene-editor">
@@ -110,13 +112,13 @@
             <path d="M260 22V278M22 150H498" class="scene-axis" />
             <circle
               id="scene-goal"
-              cx="351.7"
+              cx="353.3"
               cy="150"
               r="18"
               class="scene-goal"
               tabindex="0"
             />
-            <g id="scene-duck" transform="translate(260 150)" tabindex="0">
+            <g id="scene-duck" transform="translate(166.7 150)" tabindex="0">
               <circle r="18" class="scene-duck" />
               <path d="M-5-4L12 0-5 4Z" class="scene-beak" />
             </g>
@@ -166,7 +168,8 @@
             <span>已运行 <b id="elapsed">—</b></span
             ><span>训练速度 <b id="speed">—</b></span
             ><span>最近回合平均回报 <b id="recent-return">—</b></span
-            ><span>预计剩余采样与更新 <b id="eta">—</b></span>
+            ><span>预计剩余采样与更新 <b id="eta">—</b></span
+            ><span>30K 阶段约 <b>40–50 秒</b>（本机 CPU）</span>
           </div>
         </section>
         <section class="viewers">

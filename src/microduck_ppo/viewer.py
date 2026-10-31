@@ -268,9 +268,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if (
                     len(start) != 2
                     or len(goal) != 2
-                    or not all(map(lambda v: v == v and abs(v) <= 1.2, start + goal))
+                    or not all(map(lambda v: v == v and abs(v) <= 3.0, start + goal))
                 ):
-                    raise ValueError("起点和目标必须是 [-1.2, 1.2] 内的有限坐标")
+                    raise ValueError("起点和目标必须是 [-3.0, 3.0] 内的有限坐标")
                 distance = sum((start[i] - goal[i]) ** 2 for i in range(2)) ** 0.5
                 if abs(yaw) > 3.1415927 or distance < 0.1:
                     raise ValueError("请设置有效朝向，并让起点与目标至少相距 0.1 米")

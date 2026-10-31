@@ -1,7 +1,9 @@
 import * as THREE from './vendor/three.module.js';
 import { OrbitControls } from './vendor/OrbitControls.js';
 
-const WORLD_LIMIT = 1.1;
+// The editor is a 6 × 6 m floor: a MicroDuck is about 0.14 m wide, so this
+// leaves enough room for a visible 20 s generalization route.
+const WORLD_LIMIT = 3.0;
 
 function decode(data, dtype) {
   const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
@@ -56,14 +58,14 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
   sun.shadow.mapSize.set(1024, 1024);
   scene.add(sun);
   const floor = new THREE.Mesh(
-    new THREE.PlaneGeometry(5, 5),
+    new THREE.PlaneGeometry(6, 6),
     new THREE.MeshStandardMaterial({ color: '#e9eff0', roughness: 0.95 }),
   );
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
   floor.userData.kind = 'floor';
   scene.add(floor);
-  const grid = new THREE.GridHelper(2.4, 24, 0xc5d2d5, 0xd8e2e4);
+  const grid = new THREE.GridHelper(6, 60, 0xc5d2d5, 0xd8e2e4);
   grid.position.y = 0.002;
   scene.add(grid);
   const world = new THREE.Group();
@@ -88,8 +90,8 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
   scene.add(startMarker);
   const raycaster = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
-  let placedStart = { x: 0, y: 0 };
-  let placedGoal = { x: 0.55, y: 0 };
+  let placedStart = { x: -1.4, y: 0 };
+  let placedGoal = { x: 1.4, y: 0 };
   let modelStart = { x: 0, y: 0 };
   let meshEntries = new Map();
   let animation = 0;
@@ -156,8 +158,16 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
   }
   function setScene(start, target) {
     setPlacement(start, target);
-    camera.position.set(1.75, 1.35, 1.9);
-    controls.target.set((placedStart.x + placedGoal.x) / 2, 0.11, -(placedStart.y + placedGoal.y) / 2);
+    const center = new THREE.Vector3(
+      (placedStart.x + placedGoal.x) / 2,
+      0.11,
+      -(placedStart.y + placedGoal.y) / 2,
+    );
+    const span = Math.hypot(placedGoal.x - placedStart.x, placedGoal.y - placedStart.y);
+    const viewDistance = Math.max(1.8, Math.min(7.0, 1.4 + 1.25 * span));
+    const viewDirection = new THREE.Vector3(1.75, 1.35, 1.9).normalize();
+    camera.position.copy(center).addScaledVector(viewDirection, viewDistance);
+    controls.target.copy(center);
     controls.update();
     controls.saveState();
     reportView();
