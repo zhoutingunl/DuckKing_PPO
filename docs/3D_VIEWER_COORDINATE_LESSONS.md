@@ -2,19 +2,19 @@
 
 ## 已确认的根因
 
-MuJoCo 的 `mesh_vert` 是共享网格坐标，不能直接当作 geom 坐标使用。每个视觉 geom 的最终顶点位置是：
+MuJoCo 的 `mesh_vert` 是共享网格顶点。对本项目使用的官方 XML，编译后的 `model.geom_pos` / `model.geom_quat` 已经包含 XML mesh 的局部偏移与旋转；运行时对应 `data.geom_xpos` / `data.geom_xmat`。浏览器中的最终顶点位置是：
 
 ```text
-geom_world_pose × mesh_local_pose(mesh_pos, mesh_quat) × mesh_vert
+geom_world_pose × mesh_vert
 ```
 
-其中 `geom_xpos/geom_xmat` 只提供 geom frame 的世界位姿；`mesh_pos/mesh_quat` 还必须叠加。DuckKing 的已验证渲染器通过 body/geom 层级保留了这次变换，PPO viewer 之前把 mesh 顶点直接挂在 geom 世界位姿下，导致外壳、支架、轴承等零件散开。
+`mesh_pos/mesh_quat` 不能在浏览器再次叠加。DuckKing 的已验证渲染器同样直接使用 geom 世界矩阵；PPO viewer 之前误把已编译的 mesh frame 再应用一次，导致头部、外壳和支架贴地或偏离身体。
 
 ## 已排除的错误做法
 
 - 只给父组增加起点偏移，不能修复零件散开；它只能解决整只鸭的平移。
 - 把 mesh 世界位置减去 root，再把 root 加回父组，会重复变换，造成远处白色碎片。
-- 把 `geom_xpos` 当成 mesh 顶点坐标，忽略 `mesh_pos/mesh_quat`，会得到截图中的“中心小块 + 远处小块”。
+- 在已编译模型上再次应用 `mesh_pos/mesh_quat`，会得到“脑袋贴地、身体不完整”。
 
 ## 当前不变量
 
@@ -23,9 +23,8 @@ geom_world_pose × mesh_local_pose(mesh_pos, mesh_quat) × mesh_vert
 ```text
 world (MuJoCo x/y/z 映射到 Three x/y/z)
 └── agent group (仅负责用户起点相对默认 root 的平移)
-    └── geom frame (geom_xpos / geom_xmat)
-        └── mesh frame (mesh_pos / mesh_quat)
-            └── shared mesh vertices
+    └── geom frame (geom_xpos / geom_xmat；已包含编译后的 mesh frame)
+        └── shared mesh vertices
 ```
 
 修改模型导出或 Three.js 装配时，必须保持这条变换链；只修改相机、标签尺寸或父组坐标不能替代它。

@@ -277,9 +277,8 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
     if (agent.label) scene.remove(agent.label);
     if (agent.marker) scene.remove(agent.marker);
     if (!agent.group) return;
-    agent.group.children.forEach((part) => {
-      part.children?.forEach((mesh) => mesh.material?.dispose());
-      part.material?.dispose();
+    agent.group.children.forEach((mesh) => {
+      mesh.material?.dispose();
     });
     agent.label.material?.map?.dispose();
     agent.label.material?.dispose();
@@ -288,20 +287,14 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
     const group = new THREE.Group();
     const tint = ['#c45c20', '#267659', '#7d55a8', '#b13d61', '#947020'][index % 5];
     for (const geom of model.geoms || []) {
-      const part = new THREE.Group();
       const mesh = new THREE.Mesh(model.meshes.get(Number(geom.mesh)), makeMaterial(geom.rgba));
       mesh.castShadow = true;
       mesh.receiveShadow = true;
-      // `mesh_vert` is in the shared mesh frame.  MuJoCo's mesh_pos and
-      // mesh_quat place that frame inside this geom frame; omitting them
-      // makes shells, bearings and supports appear far from the body.
-      if (geom.mesh_position) mesh.position.fromArray(geom.mesh_position);
-      if (geom.mesh_quaternion) mesh.quaternion.fromArray([
-        geom.mesh_quaternion[1], geom.mesh_quaternion[2],
-        geom.mesh_quaternion[3], geom.mesh_quaternion[0],
-      ]);
-      part.add(mesh);
-      group.add(part);
+      // MuJoCo's compiled geom_pos/geom_quat already include the XML mesh
+      // offset and orientation. Applying mesh_pos/mesh_quat a second time
+      // puts the head and shell on the ground. Keep raw shared vertices in
+      // the geom frame, as DuckKing's physics renderer does.
+      group.add(mesh);
     }
     world.add(group);
     const label = labelSprite(spec.label, tint);
@@ -318,7 +311,7 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
       group,
       label,
       marker,
-      meshes: group.children.map((part, i) => [model.geoms[i].id, part]),
+      meshes: group.children.map((mesh, i) => [model.geoms[i].id, mesh]),
       root: { ...modelStart },
     };
   }

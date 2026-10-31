@@ -75,10 +75,6 @@ def test_three_d_visual_payload_tracks_official_mesh_state(env):
     assert model["source"] == "official_microduck_physics"
     assert len(model["meshes"]) > 10
     assert {geom["id"] for geom in model["geoms"]} == {geom["id"] for geom in state["geoms"]}
-    # The shared mesh vertices are not in geom coordinates.  Keep the asset
-    # frame transform in the payload so the browser can assemble the official
-    # shells, bearings and supports without scattering them.
-    assert all("mesh_position" in geom and "mesh_quaternion" in geom for geom in model["geoms"])
     assert state["start"] == [0.2, -0.1]
     assert state["goal"] == [0.55, 0.0]
 
