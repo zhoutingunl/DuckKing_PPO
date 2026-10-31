@@ -16,7 +16,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from .navigation import NavigationConfig, resolve_assets
+from .navigation import NavigationConfig, NavigationEnv, resolve_assets
 from .navigation_artifacts import read_json, run_summary
 from .playground_runtime import create_session
 
@@ -86,6 +86,23 @@ class Handler(SimpleHTTPRequestHandler):
                     stride = max(1, len(rows) // 500)
                     payload["episodes"] = rows[::stride]
                 return self.json_response(payload)
+            if len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "visual-model":
+                run = self.run_path(parts[2])
+                cached = self.server.playground_models.get(run.name)
+                if cached is None:
+                    manifest = read_json(run / "run.json")
+                    env = NavigationEnv(NavigationConfig(**manifest["config"]))
+                    try:
+                        env.reset(
+                            seed=42,
+                            options={"start": [0.0, 0.0], "goal": [0.55, 0.0], "yaw": 0.0},
+                        )
+                        cached = env.visual_model_payload()
+                        cached["initial_state"] = env.visual_state()
+                    finally:
+                        env.close()
+                    self.server.playground_models[run.name] = cached
+                return self.json_response(cached)
             if len(parts) == 5 and parts[:4] == ["api", "runs", parts[2], "playground"]:
                 run = self.run_path(parts[2])
                 playground_id = parts[4]
@@ -112,6 +129,23 @@ class Handler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(data)
                 return
+            if (
+                len(parts) == 6
+                and parts[:4] == ["api", "runs", parts[2], "playground"]
+                and parts[5] in {"visual-model", "visual-state"}
+            ):
+                session = self.server.playground_sessions.get(parts[4])
+                if session is None:
+                    raise FileNotFoundError("场景会话不存在或服务已重启")
+                payload = (
+                    session.visual_model_payload()
+                    if parts[5] == "visual-model"
+                    else session.visual_state_payload()
+                )
+                if payload is None:
+                    self.send_error(404)
+                    return
+                return self.json_response(payload)
             if len(parts) >= 3 and parts[0] == "artifacts":
                 run = self.run_path(parts[1])
                 path = confined(run, "/".join(parts[2:]))
@@ -238,8 +272,11 @@ class Handler(SimpleHTTPRequestHandler):
                     or not all(map(lambda v: v == v and abs(v) <= 1.2, start + goal))
                 ):
                     raise ValueError("起点和目标必须是 [-1.2, 1.2] 内的有限坐标")
-                if abs(yaw) > 3.1415927 or sum((start[i] - goal[i]) ** 2 for i in range(2)) < 0.01:
+                distance = sum((start[i] - goal[i]) ** 2 for i in range(2)) ** 0.5
+                if abs(yaw) > 3.1415927 or distance < 0.1:
                     raise ValueError("请设置有效朝向，并让起点与目标至少相距 0.1 米")
+                if distance > 0.65:
+                    raise ValueError("当前训练策略只验证 0.10–0.65 米的起点到目标距离")
                 stage_policy = confined(run, f"{stage}/policy.zip")
                 if not stage_policy.is_file():
                     raise ValueError("所选策略还没有生成")
@@ -284,6 +321,7 @@ def make_server(root, port=8780):
     server.launch_lock = threading.Lock()
     server.learner = None
     server.playground_sessions = {}
+    server.playground_models = {}
     return server
 
 

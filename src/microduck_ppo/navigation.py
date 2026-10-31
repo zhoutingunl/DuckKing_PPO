@@ -7,6 +7,7 @@ external, required, and never replaced by a toy or body-force controller.
 
 from __future__ import annotations
 
+import base64
 import math
 import os
 from dataclasses import dataclass
@@ -261,6 +262,69 @@ class NavigationEnv(gym.Env):
             self.camera_elevation = float(np.clip(elevation, -80.0, -10.0))
         if distance is not None:
             self.camera_distance = float(np.clip(distance, 0.5, 4.0))
+
+    def visual_model_payload(self):
+        """Return the official display meshes in a browser-friendly payload.
+
+        The interactive viewer uses the same MuJoCo mesh data as the software
+        renderer.  Geometry is static; poses are supplied separately by
+        :meth:`visual_state`, so a camera or placement edit never changes the
+        physics model.
+        """
+        geom_ids = np.flatnonzero(self.model.geom_group == 2)
+        meshes = {}
+        geoms = []
+        for geom_id in geom_ids:
+            geom_id = int(geom_id)
+            if int(self.model.geom_type[geom_id]) != int(mujoco.mjtGeom.mjGEOM_MESH):
+                continue
+            mesh_id = int(self.model.geom_dataid[geom_id])
+            if mesh_id not in meshes:
+                va = int(self.model.mesh_vertadr[mesh_id])
+                vn = int(self.model.mesh_vertnum[mesh_id])
+                fa = int(self.model.mesh_faceadr[mesh_id])
+                fn = int(self.model.mesh_facenum[mesh_id])
+                meshes[str(mesh_id)] = {
+                    "vertices": base64.b64encode(
+                        self.model.mesh_vert[va : va + vn].astype("<f4").tobytes()
+                    ).decode("ascii"),
+                    "faces": base64.b64encode(
+                        self.model.mesh_face[fa : fa + fn].astype("<u4").tobytes()
+                    ).decode("ascii"),
+                }
+            material = int(self.model.geom_matid[geom_id])
+            rgba = self.model.mat_rgba[material] if material >= 0 else self.model.geom_rgba[geom_id]
+            geoms.append(
+                {
+                    "id": geom_id,
+                    "mesh": mesh_id,
+                    "rgba": rgba[:3].tolist(),
+                }
+            )
+        return {
+            "format": "microduck-mujoco-mesh-v1",
+            "source": "official_microduck_physics",
+            "meshes": meshes,
+            "geoms": geoms,
+            "floor": {"size": 2.4},
+        }
+
+    def visual_state(self):
+        """Return world poses for the official display meshes."""
+        geom_ids = np.flatnonzero(self.model.geom_group == 2)
+        return {
+            "geoms": [
+                {
+                    "id": int(geom_id),
+                    "position": self.data.geom_xpos[geom_id].tolist(),
+                    "rotation": self.data.geom_xmat[geom_id].reshape(3, 3).tolist(),
+                }
+                for geom_id in geom_ids
+            ],
+            "goal": self.goal.tolist(),
+            "start": self.start.tolist(),
+            "yaw": float(self.start_yaw),
+        }
 
     def _heading_alignment(self, xy=None):
         xy = self.data.qpos[self.root : self.root + 2] if xy is None else xy

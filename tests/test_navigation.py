@@ -51,6 +51,18 @@ def test_audience_can_place_start_goal_and_yaw(env):
         env.reset(seed=1, options={"start": [2, 0], "goal": [0.2, 0]})
 
 
+def test_three_d_visual_payload_tracks_official_mesh_state(env):
+    env.reset(seed=11, options={"start": [0.2, -0.1], "goal": [0.55, 0.0], "yaw": 0.2})
+    model = env.visual_model_payload()
+    state = env.visual_state()
+    assert model["format"] == "microduck-mujoco-mesh-v1"
+    assert model["source"] == "official_microduck_physics"
+    assert len(model["meshes"]) > 10
+    assert {geom["id"] for geom in model["geoms"]} == {geom["id"] for geom in state["geoms"]}
+    assert state["start"] == [0.2, -0.1]
+    assert state["goal"] == [0.55, 0.0]
+
+
 def test_bounded_joint_actuation_moves_robot_without_body_force(env):
     env.reset(seed=5, options={"yaw": 0, "goal": [0.55, 0]})
     for _ in range(40):

@@ -205,10 +205,47 @@ button:disabled {
   border-radius: 10px;
   padding: 9px;
 }
-.scene-editor svg {
+.microduck-3d-editor {
+  position: relative;
+  height: 360px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #dbe6e8;
+}
+.microduck-3d-editor .microduck-canvas,
+.microduck-3d-live .microduck-canvas {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+}
+.microduck-3d-editor .microduck-canvas:active,
+.microduck-3d-live .microduck-canvas:active {
+  cursor: grabbing;
+}
+.scene-3d-help {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  left: 14px;
+  padding: 4px 9px;
+  border-radius: 5px;
+  color: #203d50;
+  background: #f8fbfccc;
+  font-size: 11px;
+  pointer-events: none;
+}
+.microduck-3d-live {
+  position: absolute;
+  inset: 0;
+  min-height: 360px;
+}
+.live-screen .microduck-3d-live + img {
+  display: none;
+}
+.scene-editor svg {
+  display: none;
 }
 .scene-floor {
   fill: #f6fafb;
@@ -266,7 +303,9 @@ button:disabled {
 .live-screen {
   position: relative;
   background: #b8c5ce;
-  min-height: 180px;
+  height: 360px;
+  min-height: 360px;
+  overflow: hidden;
 }
 .live-screen img {
   width: 100%;

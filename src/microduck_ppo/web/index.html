@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>MicroDuck · 学习实验台</title>
     <link rel="stylesheet" href="/style.css" />
-    <script src="/app.js" defer></script>
+    <script type="module" src="/app.js"></script>
   </head>
   <body>
     <header>
@@ -88,7 +88,10 @@
             先选择一个已完成的训练记录。
           </p>
         </div>
-        <div class="scene-editor">
+          <div class="scene-editor">
+            <div id="microduck-3d-editor" class="microduck-3d-editor" aria-label="3D 仿真场景编辑器">
+            <div class="scene-3d-help">拖动 3D 鸭子/蓝色地毯摆放 · 双击地面放置目标 · 拖动画面旋转 · 滚轮缩放</div>
+            </div>
           <svg
             id="scene-map"
             viewBox="0 0 520 300"
@@ -123,7 +126,8 @@
           </svg>
         </div>
         <div class="play-result" id="play-result" hidden>
-          <div class="live-screen">
+            <div class="live-screen">
+              <div id="microduck-3d-live" class="microduck-3d-live" aria-label="实时 3D MuJoCo 仿真画面"></div>
             <img id="play-frame" alt="实时 MuJoCo 仿真画面" /><span
               id="live-badge"
               >LIVE · MuJoCo</span

@@ -1,3 +1,5 @@
+import { createMicroDuck3D } from './microduck-3d.js';
+
 const $ = (id) => document.getElementById(id);
 const statuses = {
   starting: "正在准备",
@@ -22,7 +24,9 @@ let sceneStart = { x: 0, y: 0 },
   dragTarget = null,
   playgroundId = null,
   camera = { azimuth: 135, elevation: -45, distance: 1.6 },
-  cameraDrag = null;
+  cameraDrag = null,
+  scene3d = null,
+  live3d = null;
 const fmt = (n) => Number(n).toLocaleString("zh-CN");
 const duration = (seconds) =>
   seconds == null
@@ -34,6 +38,7 @@ const playback = (stage) => stage?.[$("mode").value];
 const url = (p) => `/artifacts/${encodeURIComponent(runId)}/${p}`;
 const playgroundUrl = (id, suffix = "") =>
   `/api/runs/${encodeURIComponent(runId)}/playground/${encodeURIComponent(id)}${suffix}`;
+const scene3dUrl = (id, kind) => playgroundUrl(id, `/${kind}`);
 async function api(path, body) {
   const r = await fetch(
     path,
@@ -290,14 +295,15 @@ function updateSceneMap() {
   $("scene-goal").setAttribute("cy", goal.y);
   $("scene-coords").textContent =
     `起点 (${sceneStart.x.toFixed(2)}, ${sceneStart.y.toFixed(2)}) · 目标 (${sceneGoal.x.toFixed(2)}, ${sceneGoal.y.toFixed(2)}) · 距离 ${Math.hypot(sceneGoal.x - sceneStart.x, sceneGoal.y - sceneStart.y).toFixed(2)} m`;
-  const valid =
-    Math.hypot(sceneGoal.x - sceneStart.x, sceneGoal.y - sceneStart.y) >= 0.1;
+  const sceneDistance = Math.hypot(sceneGoal.x - sceneStart.x, sceneGoal.y - sceneStart.y);
+  const valid = sceneDistance >= 0.1 && sceneDistance <= 0.65;
   $("play-run").disabled =
     !data ||
     !["passed", "unqualified", "stopped"].includes(data.status) ||
     !valid ||
     !$("play-stage").value;
-  if (!valid) $("play-message").textContent = "起点和目标至少相距 0.1 米。";
+  if (sceneDistance < 0.1) $("play-message").textContent = "起点和目标至少相距 0.1 米。";
+  else if (sceneDistance > 0.65) $("play-message").textContent = "当前策略验证范围为 0.10–0.65 米，请把目标放近一些。";
 }
 function setupPlayground() {
   const select = $("play-stage"),
@@ -316,6 +322,7 @@ function setupPlayground() {
   );
   if (previous && [...select.options].some((o) => o.value === previous))
     select.value = previous;
+  scene3d?.setPlacement([sceneStart.x, sceneStart.y], [sceneGoal.x, sceneGoal.y]);
   updateSceneMap();
 }
 function updateCameraReadout() {
@@ -403,6 +410,9 @@ $("play-run").onclick = async () => {
       },
     );
     playgroundId = result.id;
+    const modelPayload = await api(scene3dUrl(playgroundId, "visual-model"));
+    live3d?.loadModel(modelPayload);
+    live3d?.setPlacement([sceneStart.x, sceneStart.y], [sceneGoal.x, sceneGoal.y]);
     camera = { azimuth: 135, elevation: -45, distance: 1.6 };
     updateCameraReadout();
     const wait = async () => {
@@ -413,6 +423,13 @@ $("play-run").onclick = async () => {
         $("play-frame").src =
           `${playgroundUrl(playgroundId, "/frame.jpg")}?seq=${record.frame_seq}`;
         const info = record.info || {};
+        try {
+          const visual = await api(scene3dUrl(playgroundId, "visual-state"));
+          live3d?.updateState(visual);
+        } catch (error) {
+          // The JPEG evidence remains available while the first mesh state loads.
+          console.debug("3D state pending", error);
+        }
         if (record.camera) camera = record.camera;
         updateCameraReadout();
         updateRewardInfo(info);
@@ -428,6 +445,12 @@ $("play-run").onclick = async () => {
       $("play-frame").src =
         `${playgroundUrl(playgroundId, "/frame.jpg")}?seq=${record.frame_seq}`;
       const outcome = record.info;
+      try {
+        const visual = await api(scene3dUrl(playgroundId, "visual-state"));
+        live3d?.updateState(visual);
+      } catch (error) {
+        console.debug("3D final state unavailable", error);
+      }
       if (record.camera) camera = record.camera;
       updateCameraReadout();
       updateRewardInfo(outcome);
@@ -479,7 +502,10 @@ $("play-frame").addEventListener("wheel", (event) => {
   clearTimeout(window.cameraTimer);
   window.cameraTimer = setTimeout(() => sendCamera(camera), 30);
 }, { passive: false });
-$("camera-reset").onclick = () => sendCamera({ reset: true });
+$("camera-reset").onclick = () => {
+  live3d?.resetCamera();
+  sendCamera({ reset: true });
+};
 async function poll() {
   if (polling) return;
   polling = true;
@@ -505,6 +531,7 @@ async function poll() {
     picker.value = runId;
     data = await api(`/api/runs/${encodeURIComponent(runId)}`);
     render();
+    loadEditorModel();
   } catch (e) {
     $("message").textContent = `读取记录失败：${e.message}`;
   } finally {
@@ -573,3 +600,39 @@ $("stop").onclick = async () => {
 };
 poll();
 setInterval(poll, 3000);
+
+try {
+  scene3d = createMicroDuck3D($("microduck-3d-editor"), {
+    onPlace: ({ start, goal }) => {
+      sceneStart = start;
+      sceneGoal = goal;
+      updateSceneMap();
+    },
+  });
+  live3d = createMicroDuck3D($("microduck-3d-live"), {
+    onView: (next) => {
+      camera = next;
+      updateCameraReadout();
+      clearTimeout(window.cameraTimer);
+      window.cameraTimer = setTimeout(() => sendCamera(camera), 80);
+    },
+  });
+  scene3d.setScene([sceneStart.x, sceneStart.y], [sceneGoal.x, sceneGoal.y]);
+  live3d.setScene([sceneStart.x, sceneStart.y], [sceneGoal.x, sceneGoal.y]);
+} catch (error) {
+  console.error("MicroDuck 3D viewer unavailable", error);
+  $("play-message").textContent = "3D 视图暂不可用，仍可使用二维场景编辑器。";
+}
+let editorModelRun = "";
+async function loadEditorModel() {
+  if (!scene3d || !runId || editorModelRun === runId) return;
+  try {
+    const model = await api(`/api/runs/${encodeURIComponent(runId)}/visual-model`);
+    if (runId !== data?.id && runId !== new URLSearchParams(location.search).get("run")) return;
+    scene3d.loadModel(model);
+    scene3d.setScene([sceneStart.x, sceneStart.y], [sceneGoal.x, sceneGoal.y]);
+    editorModelRun = runId;
+  } catch (error) {
+    $("play-message").textContent = `3D 官方模型加载失败：${error.message}`;
+  }
+}

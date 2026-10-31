@@ -60,6 +60,31 @@ def test_invalid_budget_cannot_launch_process(viewer):
     assert result.value.code == 400
 
 
+def test_visual_model_route_reuses_official_mesh_payload(tmp_path):
+    run = tmp_path / "run"
+    write_json(
+        run / "run.json",
+        {
+            "status": "passed",
+            "created_at": 0,
+            "config": {},
+            "snapshots": [],
+        },
+    )
+    server = make_server(tmp_path, 0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with urlopen(
+            f"http://127.0.0.1:{server.server_port}/api/runs/run/visual-model"
+        ) as response:
+            payload = json.load(response)
+        assert payload["format"] == "microduck-mujoco-mesh-v1"
+        assert payload["initial_state"]["goal"] == [0.55, 0.0]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
 def test_playground_writes_user_scene_record(tmp_path):
     run = tmp_path / "run"
     write_json(

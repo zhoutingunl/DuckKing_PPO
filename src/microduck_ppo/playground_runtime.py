@@ -30,6 +30,8 @@ class PlaygroundSession:
         self.frame = None
         self.frame_seq = 0
         self.info = {"time": 0.0, "distance": float(np.linalg.norm(np.asarray(goal) - start))}
+        self.visual_model = None
+        self.visual_state = None
         self.started = time.perf_counter()
         self.finished = None
         self.lock = threading.Lock()
@@ -74,6 +76,8 @@ class PlaygroundSession:
                 options={"start": self.start, "goal": self.goal, "yaw": self.yaw},
             )
             with self.lock:
+                self.visual_model = env.visual_model_payload()
+                self.visual_state = env.visual_state()
                 self.camera_home = {
                     "azimuth": env.camera_azimuth,
                     "elevation": env.camera_elevation,
@@ -90,6 +94,7 @@ class PlaygroundSession:
                 self._publish(env)
                 with self.lock:
                     self.info = {**info, "reward": float(reward)}
+                    self.visual_state = env.visual_state()
                 if terminated or truncated:
                     break
                 time.sleep(max(0, config.control_interval - (time.perf_counter() - loop_started)))
@@ -117,6 +122,7 @@ class PlaygroundSession:
                 "frame_seq": self.frame_seq,
                 "info": dict(self.info),
                 "camera": dict(self.camera),
+                "visual_ready": self.visual_model is not None,
                 "error": self.error,
                 "elapsed_seconds": (self.finished or time.perf_counter()) - self.started,
             }
@@ -124,6 +130,14 @@ class PlaygroundSession:
     def frame_bytes(self):
         with self.lock:
             return self.frame
+
+    def visual_model_payload(self):
+        with self.lock:
+            return self.visual_model
+
+    def visual_state_payload(self):
+        with self.lock:
+            return self.visual_state
 
     def update_camera(self, *, azimuth=None, elevation=None, distance=None, reset=False):
         """Update viewer camera state; values are clamped by NavigationEnv."""
