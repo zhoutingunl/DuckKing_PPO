@@ -263,31 +263,67 @@ class Handler(SimpleHTTPRequestHandler):
                     "stopped",
                 }:
                     raise ValueError("请等待训练记录完成后再体验")
-                raw_stages = data.get("stages", data.get("stage", ""))
-                if isinstance(raw_stages, str):
-                    raw_stages = [raw_stages]
-                if not isinstance(raw_stages, list) or not 1 <= len(raw_stages) <= 5:
-                    raise ValueError("请选择 1–5 个训练阶段")
-                stages = [str(stage) for stage in raw_stages]
-                if any(not re.fullmatch(r"stages/\d{9}", stage) for stage in stages):
-                    raise ValueError("Invalid checkpoint stage")
-                start = [float(v) for v in data.get("start", [])]
+                raw_agents = data.get("agents")
+                if raw_agents is None:
+                    raw_stages = data.get("stages", data.get("stage", ""))
+                    if isinstance(raw_stages, str):
+                        raw_stages = [raw_stages]
+                    if not isinstance(raw_stages, list):
+                        raise ValueError("请选择训练阶段")
+                    start = [float(v) for v in data.get("start", [])]
+                    yaw = float(data.get("yaw", 0))
+                    raw_agents = [
+                        {
+                            "id": f"agent-{index + 1}",
+                            "stage": stage,
+                            "start": start,
+                            "yaw": yaw,
+                        }
+                        for index, stage in enumerate(raw_stages)
+                    ]
+                if not isinstance(raw_agents, list) or not 1 <= len(raw_agents) <= 5:
+                    raise ValueError("请逐个添加 1–5 只策略鸭")
+                agents = []
+                for index, raw_agent in enumerate(raw_agents):
+                    if not isinstance(raw_agent, dict):
+                        raise ValueError("策略鸭配置无效")
+                    stage = str(raw_agent.get("stage", ""))
+                    if not re.fullmatch(r"stages/\d{9}", stage):
+                        raise ValueError("Invalid checkpoint stage")
+                    start = [float(v) for v in raw_agent.get("start", [])]
+                    yaw = float(raw_agent.get("yaw", 0))
+                    if len(start) != 2 or not all(
+                        map(lambda v: v == v and abs(v) <= 3.0, start)
+                    ):
+                        raise ValueError("每只鸭子的起点必须是 [-3.0, 3.0] 内的有限坐标")
+                    if abs(yaw) > 3.1415927:
+                        raise ValueError("请设置有效朝向")
+                    agents.append(
+                        {
+                            "id": str(raw_agent.get("id") or f"agent-{index + 1}"),
+                            "stage": stage,
+                            "start": start,
+                            "yaw": yaw,
+                        }
+                    )
                 goal = [float(v) for v in data.get("goal", [])]
-                yaw = float(data.get("yaw", 0))
                 if (
-                    len(start) != 2
-                    or len(goal) != 2
-                    or not all(map(lambda v: v == v and abs(v) <= 3.0, start + goal))
+                    len(goal) != 2
+                    or not all(map(lambda v: v == v and abs(v) <= 3.0, goal))
                 ):
                     raise ValueError("起点和目标必须是 [-3.0, 3.0] 内的有限坐标")
-                distance = sum((start[i] - goal[i]) ** 2 for i in range(2)) ** 0.5
-                if abs(yaw) > 3.1415927 or distance < 0.1:
-                    raise ValueError("请设置有效朝向，并让起点与目标至少相距 0.1 米")
-                for stage in stages:
+                if any(
+                    sum((agent["start"][i] - goal[i]) ** 2 for i in range(2)) ** 0.5
+                    < 0.1
+                    for agent in agents
+                ):
+                    raise ValueError("请让每只鸭子与目标至少相距 0.1 米")
+                for agent in agents:
+                    stage = agent["stage"]
                     stage_policy = confined(run, f"{stage}/policy.zip")
                     if not stage_policy.is_file():
                         raise ValueError(f"所选策略还没有生成：{stage}")
-                session = create_session(run, stages, start, goal, yaw)
+                session = create_session(run, agents, goal)
                 self.server.playground_sessions[session.id] = session
                 return self.json_response({"id": session.id}, 202)
             if (

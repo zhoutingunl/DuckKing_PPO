@@ -61,28 +61,21 @@
           <span class="eyebrow">观众实验</span>
           <h2 id="playground-title">你来摆场景，小鸭来走</h2>
           <p>
-            拖动橙色小鸭和蓝色圆形地毯，选择一个训练阶段，再运行同一套 MuJoCo
-            策略。右侧画面是真实 3D
+            逐个添加不同训练阶段的策略鸭，把它们拖到不同起点，再运行同一套 MuJoCo
+            场景。画面是真实 3D
             网格仿真，起点和目标会被写入这次运行，结果不会混入训练集。鸭子约
             14 cm 宽；深色金属件使用高金属度和清漆高光材质。步态主周期约 0.4 秒、单脚步幅约 3–4 cm，当前策略有效速度约 0.15–0.18 m/s。
             场地为 6 × 6 m，默认路线约 3.4 m；每次体验最长 20 秒，短路线抵达后会停在目标处继续展示。
           </p>
           <div class="play-controls">
-            <label>同场策略<select id="play-stage" multiple size="4"></select></label>
-            <label
-              >初始朝向
-              <input
-                id="play-yaw"
-                type="range"
-                min="-180"
-                max="180"
-                value="0"
-                step="1"
-              /><output id="play-yaw-value">0°</output></label
-            >
+            <div class="agent-toolbar">
+              <button id="add-agent" type="button">＋ 添加策略鸭</button>
+              <span id="agent-count">0 只鸭子</span>
+            </div>
             <button id="play-run" disabled>运行这个场景</button>
           </div>
-          <p id="play-strategy-note" class="play-strategy-note">可按住 Command/Ctrl 多选策略，观察不同阶段同时运动。</p>
+          <div id="agent-list" class="agent-list" aria-live="polite"></div>
+          <p id="play-strategy-note" class="play-strategy-note">逐个添加策略鸭，再在右侧同一个 3D 场景中拖到不同起点。</p>
           <div class="reward-card" id="reward-card">
             <b>当前目标函数：<span id="reward-name">距离优先</span></b>
             <p id="reward-formula" class="math-formula" aria-live="polite"></p>
@@ -94,8 +87,12 @@
           </p>
         </div>
           <div class="scene-editor">
-            <div id="microduck-3d-editor" class="microduck-3d-editor" aria-label="3D 仿真场景编辑器">
-            <div class="scene-3d-help">拖动 3D 鸭子/蓝色地毯摆放 · 双击地面放置目标 · 拖动画面旋转 · 滚轮缩放</div>
+            <div id="microduck-3d-scene" class="microduck-3d-editor" aria-label="3D 仿真场景编辑器">
+              <div class="scene-3d-help">拖动每只鸭子和蓝色目标摆放 · 拖动画面旋转 · 滚轮缩放</div>
+            </div>
+            <div class="camera-controls" aria-label="调整仿真视角">
+              <button id="camera-reset" class="quiet" type="button">复位视角</button>
+              <span id="camera-readout">视角 135° · -45° · 1.6×</span>
             </div>
           <svg
             id="scene-map"
@@ -125,23 +122,17 @@
               <path d="M-5-4L12 0-5 4Z" class="scene-beak" />
             </g>
             <text x="28" y="42" class="scene-label">
-              拖动橙色小鸭 / 蓝色目标
+              拖动策略鸭 / 蓝色目标
             </text>
             <text id="scene-coords" x="28" y="266" class="scene-coords"></text>
           </svg>
         </div>
         <div class="play-result" id="play-result" hidden>
             <div class="live-screen">
-              <div id="microduck-3d-live" class="microduck-3d-live" aria-label="实时 3D MuJoCo 仿真画面"></div>
             <img id="play-frame" alt="实时 MuJoCo 仿真画面" /><span
               id="live-badge"
               >LIVE · MuJoCo</span
             >
-            <div class="camera-help">拖动画面旋转 · 滚轮缩放</div>
-            <div class="camera-controls" aria-label="调整仿真视角">
-              <button id="camera-reset" class="quiet" type="button">复位视角</button>
-              <span id="camera-readout">视角 135° · -45° · 1.6×</span>
-            </div>
           </div>
           <div>
             <b id="play-result-title"></b><span id="play-result-meta"></span>

@@ -22,19 +22,25 @@ PLAYGROUND_EPISODE_SECONDS = 20.0
 
 
 class PlaygroundSession:
-    def __init__(self, session_id, run, stages, start, goal, yaw):
+    def __init__(self, session_id, run, agents, goal):
         self.id = session_id
         self.run = Path(run)
-        self.stages = list(stages)
+        self.agents = [dict(agent) for agent in agents]
+        self.stages = [agent["stage"] for agent in self.agents]
         self.stage = self.stages[0]
-        self.start = list(start)
+        self.start = list(self.agents[0]["start"])
         self.goal = list(goal)
-        self.yaw = float(yaw)
+        self.yaw = float(self.agents[0].get("yaw", 0.0))
         self.status = "starting"
         self.error = ""
         self.frame = None
         self.frame_seq = 0
-        self.info = {"time": 0.0, "distance": float(np.linalg.norm(np.asarray(goal) - start))}
+        self.info = {
+            "time": 0.0,
+            "distance": float(np.linalg.norm(np.asarray(goal) - self.start)),
+            "agent_count": len(self.agents),
+            "success_count": 0,
+        }
         self.visual_model = None
         self.visual_state = None
         self.started = time.perf_counter()
@@ -86,7 +92,8 @@ class PlaygroundSession:
             envs = []
             observations = []
             agent_infos = []
-            for stage in self.stages:
+            for agent in self.agents:
+                stage = agent["stage"]
                 policy = (self.run / stage / "policy.zip").resolve()
                 if not policy.is_file() or not policy.is_relative_to(self.run.resolve()):
                     raise FileNotFoundError(f"Selected checkpoint policy is not ready: {stage}")
@@ -94,7 +101,11 @@ class PlaygroundSession:
                 agent_env = NavigationEnv(config, render_mode="rgb_array")
                 obs, agent_info = agent_env.reset(
                     seed=42,
-                    options={"start": self.start, "goal": self.goal, "yaw": self.yaw},
+                    options={
+                        "start": agent["start"],
+                        "goal": self.goal,
+                        "yaw": float(agent.get("yaw", 0.0)),
+                    },
                 )
                 models.append(model)
                 envs.append(agent_env)
@@ -104,7 +115,14 @@ class PlaygroundSession:
             with self.lock:
                 self.visual_model = env.visual_model_payload()
                 self.visual_state = {
-                    "agents": [agent_env.visual_state() for agent_env in envs],
+                    "agents": [
+                        {
+                            **agent_env.visual_state(),
+                            "id": self.agents[index]["id"],
+                            "stage": self.agents[index]["stage"],
+                        }
+                        for index, agent_env in enumerate(envs)
+                    ],
                     "goal": self.goal,
                     "start": self.start,
                     "yaw": self.yaw,
@@ -120,8 +138,13 @@ class PlaygroundSession:
                     "time": 0.0,
                     "distance": float(np.linalg.norm(np.asarray(self.goal) - self.start)),
                     "agents": [
-                        {**agent_info, "stage": stage, "is_success": False}
-                        for stage, agent_info in zip(self.stages, agent_infos, strict=True)
+                        {
+                            **agent_info,
+                            "id": agent["id"],
+                            "stage": agent["stage"],
+                            "is_success": False,
+                        }
+                        for agent, agent_info in zip(self.agents, agent_infos, strict=True)
                     ],
                     "agent_count": len(self.stages),
                     "success_count": 0,
@@ -147,7 +170,8 @@ class PlaygroundSession:
                     observations[index], reward, terminated, truncated, agent_infos[index] = agent_env.step(action)
                     agent_infos[index] = {
                         **agent_infos[index],
-                        "stage": self.stages[index],
+                        "id": self.agents[index]["id"],
+                        "stage": self.agents[index]["stage"],
                         "reward": float(reward),
                     }
                     if agent_infos[index].get("is_success"):
@@ -165,7 +189,14 @@ class PlaygroundSession:
                         "is_success": all(reached),
                     }
                     self.visual_state = {
-                        "agents": [agent_env.visual_state() for agent_env in envs],
+                        "agents": [
+                            {
+                                **agent_env.visual_state(),
+                                "id": self.agents[index]["id"],
+                                "stage": self.agents[index]["stage"],
+                            }
+                            for index, agent_env in enumerate(envs)
+                        ],
                         "goal": self.goal,
                         "start": self.start,
                         "yaw": self.yaw,
@@ -191,6 +222,7 @@ class PlaygroundSession:
                 "status": self.status,
                 "stage": self.stage,
                 "stages": list(self.stages),
+                "agents": [dict(agent) for agent in self.agents],
                 "start": self.start,
                 "goal": self.goal,
                 "yaw": self.yaw,
@@ -233,6 +265,6 @@ class PlaygroundSession:
             return dict(self.camera)
 
 
-def create_session(run, stages, start, goal, yaw):
+def create_session(run, agents, goal):
     session_id = time.strftime("play-%H%M%S-") + uuid.uuid4().hex[:5]
-    return PlaygroundSession(session_id, run, stages, start, goal, yaw).start_session()
+    return PlaygroundSession(session_id, run, agents, goal).start_session()

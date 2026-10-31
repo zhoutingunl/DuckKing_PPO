@@ -28,8 +28,8 @@ let sceneStart = { x: -1.4, y: 0 },
   camera = { azimuth: 135, elevation: -45, distance: 1.6 },
   cameraDrag = null,
   scene3d = null,
-  live3d = null,
-  selectedPlayStages = [];
+  agentSpecs = [],
+  agentSequence = 1;
 const fmt = (n) => Number(n).toLocaleString("zh-CN");
 const duration = (seconds) =>
   seconds == null
@@ -359,52 +359,40 @@ function clampScene(point) {
   };
 }
 function updateSceneMap() {
-  const duck = worldToMap(sceneStart),
-    goal = worldToMap(sceneGoal);
+  const first = agentSpecs[0];
+  if (first) sceneStart = first.start;
+  const duck = worldToMap(sceneStart), goal = worldToMap(sceneGoal);
   $("scene-duck").setAttribute("transform", `translate(${duck.x} ${duck.y})`);
-  $("scene-goal").setAttribute("cx", goal.x);
-  $("scene-goal").setAttribute("cy", goal.y);
-  $("scene-coords").textContent =
-    `起点 (${sceneStart.x.toFixed(2)}, ${sceneStart.y.toFixed(2)}) · 目标 (${sceneGoal.x.toFixed(2)}, ${sceneGoal.y.toFixed(2)}) · 距离 ${Math.hypot(sceneGoal.x - sceneStart.x, sceneGoal.y - sceneStart.y).toFixed(2)} m`;
+  $("scene-goal").setAttribute("cx", goal.x); $("scene-goal").setAttribute("cy", goal.y);
+  $("scene-coords").textContent = `目标 (${sceneGoal.x.toFixed(2)}, ${sceneGoal.y.toFixed(2)}) · ${agentSpecs.length} 只鸭子`;
   const sceneDistance = Math.hypot(sceneGoal.x - sceneStart.x, sceneGoal.y - sceneStart.y);
   const valid = sceneDistance >= 0.1 && sceneDistance <= 8.5;
-  $("play-run").disabled =
-    !data ||
-    !["passed", "unqualified", "stopped"].includes(data.status) ||
-    !valid ||
-    !$("play-stage").value;
+  $("play-run").disabled = !data || !["passed", "unqualified", "stopped"].includes(data.status) || !valid || !agentSpecs.length;
   if (sceneDistance < 0.1) $("play-message").textContent = "起点和目标至少相距 0.1 米。";
-  else if (sceneDistance > 0.65) $("play-message").textContent = "当前场景超出训练距离分布（0.65m），将作为 20 秒泛化测试运行。";
-  else if (data && $("play-stage").value) $("play-message").textContent = "可以运行当前场景。";
+  else if (data && agentSpecs.length) $("play-message").textContent = "可以运行当前场景。";
 }
 function setupPlayground() {
-  const select = $("play-stage"),
-    previous = selectedPlayStages.length ? selectedPlayStages : [...select.selectedOptions].map((o) => o.value);
-  select.replaceChildren(
-    ...(data?.stages || [])
-      .filter((s) => s.status === "ready" && s.directory)
-      .map((s) => {
-        const option = document.createElement("option");
-        option.value = s.directory;
-        option.textContent =
-          stageLabel(s) +
-          (s.directory === data.best_directory ? " · 最佳" : "");
-        option.selected = previous.includes(s.directory);
-        return option;
-      }),
-  );
-  if (!selectedPlayStages.length && select.options.length) select.options[0].selected = true;
-  selectedPlayStages = [...select.selectedOptions].map((option) => option.value);
-  scene3d?.setPlacement([sceneStart.x, sceneStart.y], [sceneGoal.x, sceneGoal.y]);
-  updateSceneMap();
+  const stages = (data?.stages || []).filter((s) => s.status === "ready" && s.directory);
+  if (!agentSpecs.length && stages.length) agentSpecs = [{ id: `agent-${agentSequence++}`, stage: stages[0].directory, start: { ...sceneStart }, yaw: 0 }];
+  agentSpecs = agentSpecs.filter((agent) => stages.some((s) => s.directory === agent.stage));
+  renderAgentList(stages);
+  if (!playgroundId) scene3d?.setAgents(agentSpecs.map(agent => ({ ...agent, label: stageLabel(stages.find(s => s.directory === agent.stage) || {}) })));
+  scene3d?.setGoal(sceneGoal); updateSceneMap();
 }
-function updatePlayStrategyList() {
-  const select = $("play-stage");
-  selectedPlayStages = [...select.selectedOptions].map((option) => option.value);
-  if (!selectedPlayStages.length && select.value) selectedPlayStages = [select.value];
-  $("play-strategy-note").textContent = selectedPlayStages.length > 1
-    ? `同场运行 ${selectedPlayStages.length} 个策略：${selectedPlayStages.map((stage) => stageLabel(data.stages.find((item) => item.directory === stage))).join("、")}`
-    : "可按住 Command/Ctrl 多选策略，观察不同阶段同时运动。";
+function renderAgentList(stages) {
+  const list = $("agent-list"); if (!list) return;
+  list.replaceChildren(...agentSpecs.map((agent, index) => {
+    const row = document.createElement("div"); row.className = "agent-row"; row.dataset.id = agent.id;
+    const title = document.createElement("span"); title.className = "agent-index"; title.textContent = `鸭 ${index + 1}`;
+    const select = document.createElement("select"); select.setAttribute("aria-label", `鸭 ${index + 1} 的训练策略`);
+    select.replaceChildren(...stages.map(stage => { const o = document.createElement("option"); o.value = stage.directory; o.textContent = stageLabel(stage); o.selected = stage.directory === agent.stage; return o; }));
+    select.onchange = () => { agent.stage = select.value; setupPlayground(); };
+    const yaw = document.createElement("input"); yaw.type = "range"; yaw.min = -180; yaw.max = 180; yaw.value = Math.round(agent.yaw * 180 / Math.PI); yaw.title = "初始朝向"; yaw.oninput = () => { agent.yaw = Number(yaw.value) * Math.PI / 180; };
+    const remove = document.createElement("button"); remove.type = "button"; remove.className = "quiet"; remove.textContent = "移除"; remove.onclick = () => { agentSpecs = agentSpecs.filter(item => item.id !== agent.id); setupPlayground(); };
+    row.append(title, select, yaw, remove); return row;
+  }));
+  $("agent-count").textContent = `${agentSpecs.length} 只鸭子`;
+  $("play-strategy-note").textContent = agentSpecs.length > 1 ? `同一个 3D 场景将同时运行 ${agentSpecs.length} 个策略。拖动每只鸭子到不同位置。` : "逐个添加策略鸭，再在右侧同一个 3D 场景中拖到不同起点。";
 }
 function updateCameraReadout() {
   $("camera-readout").textContent =
@@ -471,12 +459,9 @@ $("scene-map").addEventListener("pointerup", () => {
 $("scene-map").addEventListener("pointercancel", () => {
   dragTarget = null;
 });
-$("play-yaw").oninput = () => {
-  $("play-yaw-value").textContent = `${$("play-yaw").value}°`;
-};
-$("play-stage").onchange = () => { updatePlayStrategyList(); updateSceneMap(); };
+$("add-agent").onclick = () => { const stages = (data?.stages || []).filter(s => s.status === "ready" && s.directory); if (!stages.length || agentSpecs.length >= 5) return; const offset = agentSpecs.length * 0.35; agentSpecs.push({ id: `agent-${agentSequence++}`, stage: stages[Math.min(agentSpecs.length, stages.length - 1)].directory, start: { x: -1.4 + offset, y: offset * 0.4 }, yaw: 0 }); setupPlayground(); };
 $("play-run").onclick = async () => {
-  if (!runId || !$("play-stage").value) return;
+  if (!runId || !agentSpecs.length) return;
   $("play-run").disabled = true;
   $("play-message").textContent = "正在用这个场景运行 MuJoCo…";
   $("play-result").hidden = true;
@@ -484,14 +469,12 @@ $("play-run").onclick = async () => {
     const result = await api(
       `/api/runs/${encodeURIComponent(runId)}/playground`,
       {
-        stages: selectedPlayStages.length ? selectedPlayStages : [$("play-stage").value],
-        start: [sceneStart.x, sceneStart.y],
+        agents: agentSpecs.map(agent => ({ id: agent.id, stage: agent.stage, start: [agent.start.x, agent.start.y], yaw: agent.yaw })),
         goal: [sceneGoal.x, sceneGoal.y],
-        yaw: (Number($("play-yaw").value) * Math.PI) / 180,
       },
     );
     playgroundId = result.id;
-    live3d?.setPlacement([sceneStart.x, sceneStart.y], [sceneGoal.x, sceneGoal.y]);
+    scene3d?.setRunningMode();
     camera = { azimuth: 135, elevation: -45, distance: 1.6 };
     updateCameraReadout();
     let liveModelLoaded = false;
@@ -502,7 +485,7 @@ $("play-run").onclick = async () => {
       if (record.visual_ready && !liveModelLoaded) {
         try {
           const modelPayload = await api(scene3dUrl(playgroundId, "visual-model"));
-          live3d?.loadModel(modelPayload);
+          scene3d?.loadModel(modelPayload);
           liveModelLoaded = true;
         } catch (error) {
           $("play-message").textContent = `3D 模型加载中：${error.message}`;
@@ -514,7 +497,7 @@ $("play-run").onclick = async () => {
         const info = record.info || {};
         try {
           const visual = await api(scene3dUrl(playgroundId, "visual-state"));
-          if (liveModelLoaded) live3d?.updateState(visual);
+          if (liveModelLoaded) scene3d?.updateState(visual);
         } catch (error) {
           // The JPEG evidence remains available while the first mesh state loads.
           console.debug("3D state pending", error);
@@ -531,12 +514,13 @@ $("play-run").onclick = async () => {
       }
       if (record.status !== "ready")
         throw Error(record.error || "场景回放失败");
+      playgroundId = null;
       $("play-frame").src =
         `${playgroundUrl(playgroundId, "/frame.jpg")}?seq=${record.frame_seq}`;
       const outcome = record.info;
       try {
         const visual = await api(scene3dUrl(playgroundId, "visual-state"));
-        live3d?.updateState(visual);
+        scene3d?.updateState(visual);
       } catch (error) {
         console.debug("3D final state unavailable", error);
       }
@@ -549,10 +533,11 @@ $("play-run").onclick = async () => {
           ? "小鸭摔倒了"
           : "这次没有抵达";
       $("play-result-meta").textContent =
-        `${outcome.agent_count || selectedPlayStages.length} 个策略同场 · ${outcome.success_count || 0} 个已抵达 · 最终仿真 ${outcome.time.toFixed(1)} 秒 · 用时 ${record.elapsed_seconds.toFixed(1)} 秒`;
+        `${outcome.agent_count || agentSpecs.length} 个策略同场 · ${outcome.success_count || 0} 个已抵达 · 最终仿真 ${outcome.time.toFixed(1)} 秒 · 用时 ${record.elapsed_seconds.toFixed(1)} 秒`;
       $("play-result").hidden = false;
       $("play-message").textContent =
         "可以继续拖动位置，或换一个训练阶段再运行。";
+      scene3d?.setPlacementMode();
       updateSceneMap();
     };
     await wait();
@@ -592,7 +577,7 @@ $("play-frame").addEventListener("wheel", (event) => {
   window.cameraTimer = setTimeout(() => sendCamera(camera), 30);
 }, { passive: false });
 $("camera-reset").onclick = () => {
-  live3d?.resetCamera();
+  scene3d?.resetCamera();
   sendCamera({ reset: true });
 };
 async function poll() {
@@ -691,23 +676,11 @@ poll();
 setInterval(poll, 3000);
 
 try {
-  scene3d = createMicroDuck3D($("microduck-3d-editor"), {
-    onPlace: ({ start, goal }) => {
-      sceneStart = start;
-      sceneGoal = goal;
-      updateSceneMap();
-    },
-  });
-  live3d = createMicroDuck3D($("microduck-3d-live"), {
-    onView: (next) => {
-      camera = next;
-      updateCameraReadout();
-      clearTimeout(window.cameraTimer);
-      window.cameraTimer = setTimeout(() => sendCamera(camera), 80);
-    },
+  scene3d = createMicroDuck3D($("microduck-3d-scene"), {
+    onPlace: ({ agentId, start, goal }) => { if (agentId) { const agent = agentSpecs.find(item => item.id === agentId); if (agent) agent.start = start; } if (goal) sceneGoal = goal; updateSceneMap(); },
+    onView: (next) => { camera = next; updateCameraReadout(); clearTimeout(window.cameraTimer); window.cameraTimer = setTimeout(() => sendCamera(camera), 80); },
   });
   scene3d.setScene([sceneStart.x, sceneStart.y], [sceneGoal.x, sceneGoal.y]);
-  live3d.setScene([sceneStart.x, sceneStart.y], [sceneGoal.x, sceneGoal.y]);
 } catch (error) {
   console.error("MicroDuck 3D viewer unavailable", error);
   $("play-message").textContent = "3D 视图暂不可用，仍可使用二维场景编辑器。";
@@ -719,7 +692,8 @@ async function loadEditorModel() {
     const model = await api(`/api/runs/${encodeURIComponent(runId)}/visual-model`);
     if (runId !== data?.id && runId !== new URLSearchParams(location.search).get("run")) return;
     scene3d.loadModel(model);
-    scene3d.setScene([sceneStart.x, sceneStart.y], [sceneGoal.x, sceneGoal.y]);
+    scene3d.setAgents(agentSpecs);
+    scene3d.setGoal(sceneGoal);
     editorModelRun = runId;
   } catch (error) {
     $("play-message").textContent = `3D 官方模型加载失败：${error.message}`;
