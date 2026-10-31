@@ -50,8 +50,14 @@ async function api(path, body) {
           body: JSON.stringify(body),
         },
   );
-  const p = await r.json();
-  if (!r.ok) throw Error(p.error || "请求失败");
+  const raw = await r.text();
+  let p;
+  try {
+    p = raw ? JSON.parse(raw) : {};
+  } catch {
+    throw Error(`请求失败（HTTP ${r.status}，服务返回了非 JSON 内容）`);
+  }
+  if (!r.ok) throw Error(p.error || `请求失败（HTTP ${r.status}）`);
   return p;
 }
 function setVideo(id, stage) {
@@ -344,14 +350,14 @@ function updateSceneMap() {
   $("scene-coords").textContent =
     `起点 (${sceneStart.x.toFixed(2)}, ${sceneStart.y.toFixed(2)}) · 目标 (${sceneGoal.x.toFixed(2)}, ${sceneGoal.y.toFixed(2)}) · 距离 ${Math.hypot(sceneGoal.x - sceneStart.x, sceneGoal.y - sceneStart.y).toFixed(2)} m`;
   const sceneDistance = Math.hypot(sceneGoal.x - sceneStart.x, sceneGoal.y - sceneStart.y);
-  const valid = sceneDistance >= 0.1 && sceneDistance <= 0.65;
+  const valid = sceneDistance >= 0.1 && sceneDistance <= 1.1;
   $("play-run").disabled =
     !data ||
     !["passed", "unqualified", "stopped"].includes(data.status) ||
     !valid ||
     !$("play-stage").value;
   if (sceneDistance < 0.1) $("play-message").textContent = "起点和目标至少相距 0.1 米。";
-  else if (sceneDistance > 0.65) $("play-message").textContent = "当前策略验证范围为 0.10–0.65 米，请把目标放近一些。";
+  else if (sceneDistance > 0.65) $("play-message").textContent = "当前场景超出训练距离分布（0.65m），将作为泛化测试运行。";
 }
 function setupPlayground() {
   const select = $("play-stage"),
@@ -458,22 +464,30 @@ $("play-run").onclick = async () => {
       },
     );
     playgroundId = result.id;
-    const modelPayload = await api(scene3dUrl(playgroundId, "visual-model"));
-    live3d?.loadModel(modelPayload);
     live3d?.setPlacement([sceneStart.x, sceneStart.y], [sceneGoal.x, sceneGoal.y]);
     camera = { azimuth: 135, elevation: -45, distance: 1.6 };
     updateCameraReadout();
+    let liveModelLoaded = false;
     const wait = async () => {
       const record = await api(
         `/api/runs/${encodeURIComponent(runId)}/playground/${encodeURIComponent(playgroundId)}`,
       );
+      if (record.visual_ready && !liveModelLoaded) {
+        try {
+          const modelPayload = await api(scene3dUrl(playgroundId, "visual-model"));
+          live3d?.loadModel(modelPayload);
+          liveModelLoaded = true;
+        } catch (error) {
+          $("play-message").textContent = `3D 模型加载中：${error.message}`;
+        }
+      }
       if (["starting", "running"].includes(record.status)) {
         $("play-frame").src =
           `${playgroundUrl(playgroundId, "/frame.jpg")}?seq=${record.frame_seq}`;
         const info = record.info || {};
         try {
           const visual = await api(scene3dUrl(playgroundId, "visual-state"));
-          live3d?.updateState(visual);
+          if (liveModelLoaded) live3d?.updateState(visual);
         } catch (error) {
           // The JPEG evidence remains available while the first mesh state loads.
           console.debug("3D state pending", error);

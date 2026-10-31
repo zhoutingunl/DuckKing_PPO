@@ -143,8 +143,7 @@ class Handler(SimpleHTTPRequestHandler):
                     else session.visual_state_payload()
                 )
                 if payload is None:
-                    self.send_error(404)
-                    return
+                    return self.json_response({"error": "场景模型仍在初始化，请稍候"}, 409)
                 return self.json_response(payload)
             if len(parts) >= 3 and parts[0] == "artifacts":
                 run = self.run_path(parts[1])
@@ -275,8 +274,6 @@ class Handler(SimpleHTTPRequestHandler):
                 distance = sum((start[i] - goal[i]) ** 2 for i in range(2)) ** 0.5
                 if abs(yaw) > 3.1415927 or distance < 0.1:
                     raise ValueError("请设置有效朝向，并让起点与目标至少相距 0.1 米")
-                if distance > 0.65:
-                    raise ValueError("当前训练策略只验证 0.10–0.65 米的起点到目标距离")
                 stage_policy = confined(run, f"{stage}/policy.zip")
                 if not stage_policy.is_file():
                     raise ValueError("所选策略还没有生成")

@@ -294,11 +294,21 @@ class NavigationEnv(gym.Env):
                 }
             material = int(self.model.geom_matid[geom_id])
             rgba = self.model.mat_rgba[material] if material >= 0 else self.model.geom_rgba[geom_id]
+            material_info = (
+                {
+                    "specular": float(self.model.mat_specular[material]),
+                    "shininess": float(self.model.mat_shininess[material]),
+                    "reflectance": float(self.model.mat_reflectance[material]),
+                }
+                if material >= 0
+                else {"specular": 0.25, "shininess": 0.5, "reflectance": 0.0}
+            )
             geoms.append(
                 {
                     "id": geom_id,
                     "mesh": mesh_id,
                     "rgba": rgba[:3].tolist(),
+                    "material": material_info,
                 }
             )
         return {

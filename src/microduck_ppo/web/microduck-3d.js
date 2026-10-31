@@ -2,7 +2,6 @@ import * as THREE from './vendor/three.module.js';
 import { OrbitControls } from './vendor/OrbitControls.js';
 
 const WORLD_LIMIT = 1.1;
-const MAX_EXPERIMENT_DISTANCE = 0.65;
 
 function decode(data, dtype) {
   const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
@@ -52,7 +51,7 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
 
   scene.add(new THREE.HemisphereLight(0xffffff, 0x71815a, 2.4));
   const sun = new THREE.DirectionalLight(0xfff6df, 3);
-  sun.position.set(1.5, 3.5, 2.2);
+  sun.position.set(1, 2, 1);
   sun.castShadow = true;
   sun.shadow.mapSize.set(1024, 1024);
   scene.add(sun);
@@ -116,17 +115,8 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
     if (!hit) return;
     const x = Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, hit.point.x));
     const y = Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, -hit.point.z));
-    const other = kind === 'goal' ? placedStart : placedGoal;
-    let next = { x, y };
-    const dx = next.x - other.x;
-    const dy = next.y - other.y;
-    const distance = Math.hypot(dx, dy);
-    if (distance > MAX_EXPERIMENT_DISTANCE) {
-      const scale = MAX_EXPERIMENT_DISTANCE / distance;
-      next = { x: other.x + dx * scale, y: other.y + dy * scale };
-    }
-    if (kind === 'goal') placedGoal = next;
-    else placedStart = next;
+    if (kind === 'goal') placedGoal = { x, y };
+    else placedStart = { x, y };
     updateMarkers();
     onPlace({ start: placedStart, goal: placedGoal, source: kind });
   }
@@ -189,9 +179,14 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
       meshes.set(Number(id), geometry);
     }
     for (const geom of model.geoms || []) {
+      const surface = geom.material || {};
       const mesh = new THREE.Mesh(
         meshes.get(Number(geom.mesh)),
-        new THREE.MeshStandardMaterial({ color: color(geom.rgba), roughness: 0.66, metalness: 0.08 }),
+        new THREE.MeshStandardMaterial({
+          color: color(geom.rgba),
+          roughness: 0.66,
+          metalness: 0.08,
+        }),
       );
       mesh.castShadow = true;
       mesh.receiveShadow = true;
