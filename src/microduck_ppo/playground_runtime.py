@@ -21,6 +21,7 @@ from .navigation_artifacts import read_json
 PLAYGROUND_WORLD_LIMIT = 3.0
 PLAYGROUND_EPISODE_SECONDS = 20.0
 PLAYGROUND_FRAME_EVERY = 5
+PLAYGROUND_STATE_EVERY = 2
 
 
 class PlaygroundSession:
@@ -96,6 +97,11 @@ class PlaygroundSession:
             observations = []
             agent_infos = []
             for agent in self.agents:
+                if self.stop_event.is_set():
+                    with self.lock:
+                        self.status = "stopped"
+                        self.finished = time.perf_counter()
+                    return
                 stage = agent["stage"]
                 policy = (self.run / stage / "policy.zip").resolve()
                 if not policy.is_file() or not policy.is_relative_to(self.run.resolve()):
@@ -197,19 +203,22 @@ class PlaygroundSession:
                         "success_count": sum(reached),
                         "is_success": all(reached),
                     }
-                    self.visual_state = {
-                        "agents": [
-                            {
-                                **agent_env.visual_state(),
-                                "id": self.agents[index]["id"],
-                                "stage": self.agents[index]["stage"],
-                            }
-                            for index, agent_env in enumerate(envs)
-                        ],
-                        "goal": self.goal,
-                        "start": self.start,
-                        "yaw": self.yaw,
-                    }
+                    if frame_index % PLAYGROUND_STATE_EVERY == 0:
+                        self.visual_state = {
+                            "agents": [
+                                {
+                                    **agent_env.visual_state(),
+                                    "id": self.agents[index]["id"],
+                                    "stage": self.agents[index]["stage"],
+                                }
+                                for index, agent_env in enumerate(envs)
+                            ],
+                            "goal": self.goal,
+                            "start": self.start,
+                            "yaw": self.yaw,
+                        }
+                if all(reached[index] or finished[index] for index in range(len(envs))):
+                    break
                 time.sleep(max(0, config.control_interval - (time.perf_counter() - loop_started)))
             with self.lock:
                 self.status = "stopped" if self.stop_event.is_set() else "ready"

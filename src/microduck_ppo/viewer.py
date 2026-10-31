@@ -23,7 +23,7 @@ from .playground_runtime import create_session
 STATIC = Path(__file__).with_name("web")
 ACTIVE = {"starting", "training", "rendering", "evaluating"}
 PLAYGROUND_MAX_SESSIONS = 1
-PLAYGROUND_KEEP_SECONDS = 90.0
+PLAYGROUND_KEEP_SECONDS = 15.0
 
 
 def confined(root, relative):
