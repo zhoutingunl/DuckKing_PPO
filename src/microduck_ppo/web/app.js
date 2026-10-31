@@ -1,4 +1,4 @@
-import { createMicroDuck3D } from './microduck-3d.js';
+import { createMicroDuck3D } from './microduck-3d.js?v=20261031-single-scene-fix2';
 
 const $ = (id) => document.getElementById(id);
 const statuses = {
@@ -29,7 +29,8 @@ let sceneStart = { x: -1.4, y: 0 },
   cameraDrag = null,
   scene3d = null,
   agentSpecs = [],
-  agentSequence = 1;
+  agentSequence = 1,
+  editorModelRun = "";
 const fmt = (n) => Number(n).toLocaleString("zh-CN");
 const duration = (seconds) =>
   seconds == null
@@ -365,10 +366,12 @@ function updateSceneMap() {
   $("scene-duck").setAttribute("transform", `translate(${duck.x} ${duck.y})`);
   $("scene-goal").setAttribute("cx", goal.x); $("scene-goal").setAttribute("cy", goal.y);
   $("scene-coords").textContent = `目标 (${sceneGoal.x.toFixed(2)}, ${sceneGoal.y.toFixed(2)}) · ${agentSpecs.length} 只鸭子`;
-  const sceneDistance = Math.hypot(sceneGoal.x - sceneStart.x, sceneGoal.y - sceneStart.y);
-  const valid = sceneDistance >= 0.1 && sceneDistance <= 8.5;
+  const distances = agentSpecs.map((agent) => Math.hypot(sceneGoal.x - agent.start.x, sceneGoal.y - agent.start.y));
+  const sceneDistance = distances[0] ?? Math.hypot(sceneGoal.x - sceneStart.x, sceneGoal.y - sceneStart.y);
+  const valid = agentSpecs.length > 0 && distances.every((distance) => distance >= 0.1 && distance <= 8.5);
   $("play-run").disabled = !data || !["passed", "unqualified", "stopped"].includes(data.status) || !valid || !agentSpecs.length;
-  if (sceneDistance < 0.1) $("play-message").textContent = "起点和目标至少相距 0.1 米。";
+  if (!agentSpecs.length) $("play-message").textContent = "先添加至少一只策略鸭。";
+  else if (distances.some((distance) => distance < 0.1)) $("play-message").textContent = "每只鸭子与目标至少相距 0.1 米。";
   else if (data && agentSpecs.length) $("play-message").textContent = "可以运行当前场景。";
 }
 function setupPlayground() {
@@ -376,8 +379,14 @@ function setupPlayground() {
   if (!agentSpecs.length && stages.length) agentSpecs = [{ id: `agent-${agentSequence++}`, stage: stages[0].directory, start: { ...sceneStart }, yaw: 0 }];
   agentSpecs = agentSpecs.filter((agent) => stages.some((s) => s.directory === agent.stage));
   renderAgentList(stages);
-  if (!playgroundId) scene3d?.setAgents(agentSpecs.map(agent => ({ ...agent, label: stageLabel(stages.find(s => s.directory === agent.stage) || {}) })));
-  scene3d?.setGoal(sceneGoal); updateSceneMap();
+  try {
+    if (!playgroundId) scene3d?.setAgents(agentSpecs.map(agent => ({ ...agent, label: stageLabel(stages.find(s => s.directory === agent.stage) || {}) })));
+    scene3d?.setGoal(sceneGoal);
+  } catch (error) {
+    console.error("3D placement update failed", error);
+    $("play-message").textContent = `3D 场景正在初始化：${error.message}`;
+  }
+  updateSceneMap();
 }
 function renderAgentList(stages) {
   const list = $("agent-list"); if (!list) return;
@@ -605,7 +614,7 @@ async function poll() {
     picker.value = runId;
     data = await api(`/api/runs/${encodeURIComponent(runId)}`);
     render();
-    loadEditorModel();
+    void loadEditorModel();
   } catch (e) {
     $("message").textContent = `读取记录失败：${e.message}`;
   } finally {
@@ -685,17 +694,18 @@ try {
   console.error("MicroDuck 3D viewer unavailable", error);
   $("play-message").textContent = "3D 视图暂不可用，仍可使用二维场景编辑器。";
 }
-let editorModelRun = "";
 async function loadEditorModel() {
   if (!scene3d || !runId || editorModelRun === runId) return;
+  const loadingRun = runId;
+  editorModelRun = runId;
   try {
     const model = await api(`/api/runs/${encodeURIComponent(runId)}/visual-model`);
-    if (runId !== data?.id && runId !== new URLSearchParams(location.search).get("run")) return;
+    if (runId !== loadingRun || runId !== data?.id) return;
     scene3d.loadModel(model);
     scene3d.setAgents(agentSpecs);
     scene3d.setGoal(sceneGoal);
-    editorModelRun = runId;
   } catch (error) {
+    if (runId === loadingRun) editorModelRun = "";
     $("play-message").textContent = `3D 官方模型加载失败：${error.message}`;
   }
 }
