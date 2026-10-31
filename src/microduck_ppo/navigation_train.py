@@ -31,13 +31,35 @@ from .navigation_artifacts import (
 
 
 class EvolutionCallback(BaseCallback):
-    def __init__(self, run, manifest, queue, every):
+    def __init__(
+        self,
+        run,
+        manifest,
+        queue,
+        every,
+        *,
+        dense_until=32_000,
+        late_every=10_240,
+        target_success_rate=1.0,
+        target_window=2,
+    ):
         super().__init__()
         self.run, self.manifest, self.queue, self.every = run, manifest, queue, every
         self.next_snapshot = every
         self.started = time.perf_counter()
         self.returns = []
         self.last_write = 0
+        self.target_success_rate = float(target_success_rate)
+        self.target_window = int(target_window)
+        self.dense_until = int(dense_until)
+        self.late_every = int(late_every)
+        self.successes = []
+        self.convergence_step = None
+        self.convergence_checkpoint = None
+        self.convergence_streak = 0
+        self.residuals = []
+        self.action_deltas = []
+        self.last_artifact_check = 0.0
 
     def snapshot(self, kind):
         updates = int(self.model._n_updates)
@@ -53,6 +75,9 @@ class EvolutionCallback(BaseCallback):
             "policy_sha256": sha256(folder / "policy.zip"),
             "elapsed_seconds": time.perf_counter() - self.started,
         }
+        self.manifest["snapshots"] = [
+            item for item in self.manifest["snapshots"] if item.get("directory") != record["directory"]
+        ]
         self.manifest["snapshots"].append(record)
         self.flush()
         self.queue.put(record)
@@ -66,6 +91,13 @@ class EvolutionCallback(BaseCallback):
             steps_per_second=self.model.num_timesteps
             / max(self.manifest.get("training_seconds", elapsed), 0.001),
             recent_return=float(np.mean(self.returns[-40:])) if self.returns else None,
+            recent_success_rate=(float(np.mean(self.successes[-32:])) if self.successes else None),
+            recent_action_residual=(
+                float(np.mean(self.residuals[-256:])) if self.residuals else None
+            ),
+            recent_action_delta=(
+                float(np.mean(self.action_deltas[-256:])) if self.action_deltas else None
+            ),
         )
         write_json(self.run / "run.json", self.manifest)
         self.last_write = time.perf_counter()
@@ -75,12 +107,66 @@ class EvolutionCallback(BaseCallback):
         # completed update is actually present in the saved policy.
         if self.num_timesteps >= self.next_snapshot:
             self.snapshot("checkpoint")
-            self.next_snapshot = (self.num_timesteps // self.every + 1) * self.every
+            interval = self.every if self.num_timesteps < self.dense_until else self.late_every
+            self.next_snapshot = (self.num_timesteps // interval + 1) * interval
+
+    def _check_artifact_convergence(self):
+        """Stop from a completed checkpoint evaluation, rather than raw reward."""
+        now = time.perf_counter()
+        if now - self.last_artifact_check < 0.5 or self.convergence_step is not None:
+            return
+        self.last_artifact_check = now
+        for snapshot in self.manifest["snapshots"]:
+            if snapshot.get("kind") != "checkpoint":
+                continue
+            stage_path = self.run / snapshot["directory"] / "stage.json"
+            if not stage_path.is_file():
+                continue
+            try:
+                stage = json.loads(stage_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            evaluation = stage.get("evaluation") or {}
+            if (
+                stage.get("status") == "ready"
+                and evaluation.get("success_rate", 0.0) >= self.target_success_rate
+            ):
+                self.convergence_step = int(self.model.num_timesteps)
+                self.convergence_checkpoint = int(snapshot["timesteps"])
+                self.manifest["convergence"] = {
+                    "timesteps": self.convergence_step,
+                    "checkpoint_timesteps": int(snapshot["timesteps"]),
+                    "success_rate": float(evaluation["success_rate"]),
+                    "window_episodes": int(evaluation.get("episodes", 0)),
+                    "early_stop": True,
+                    "source": "checkpoint_validation",
+                }
+                return
 
     def _on_step(self):
+        self._check_artifact_convergence()
         for info in self.locals.get("infos", []):
+            if "action_residual" in info:
+                self.residuals.append(float(info["action_residual"]))
+            if "action_delta" in info:
+                self.action_deltas.append(float(info["action_delta"]))
             if "episode" in info:
                 self.returns.append(info["episode"]["r"])
+                self.successes.append(bool(info.get("is_success", False)))
+                window = self.successes[-32:]
+                if len(window) >= 32 and np.mean(window) >= self.target_success_rate:
+                    self.convergence_streak += 1
+                    if self.convergence_streak >= self.target_window and self.convergence_step is None:
+                        self.convergence_step = int(self.model.num_timesteps)
+                        self.manifest["convergence"] = {
+                            "timesteps": self.convergence_step,
+                            "success_rate": float(np.mean(window)),
+                            "window_episodes": len(window),
+                            "streak_windows": self.convergence_streak,
+                            "early_stop": True,
+                        }
+                else:
+                    self.convergence_streak = 0
                 with (self.run / "episodes.jsonl").open("a", encoding="utf-8") as stream:
                     stream.write(
                         json.dumps(
@@ -89,13 +175,15 @@ class EvolutionCallback(BaseCallback):
                                 **info["episode"],
                                 "is_success": info.get("is_success", False),
                                 "failure_reason": info.get("failure_reason", ""),
+                                "action_residual": info.get("action_residual"),
+                                "action_delta": info.get("action_delta"),
                             }
                         )
                         + "\n"
                     )
         if time.perf_counter() - self.last_write >= 1:
             self.flush()
-        return not (self.run / "STOP").exists()
+        return not (self.run / "STOP").exists() and self.convergence_step is None
 
 
 def build_model(config, *, envs=1, n_steps=256, seed=7, threads=1):
@@ -187,13 +275,25 @@ def train(args):
         worker = context.Process(target=artifact_worker, args=(str(run), asdict(config), queue))
         worker.start()
         manifest["status"] = "training"
-        callback = EvolutionCallback(run, manifest, queue, args.checkpoint_every)
+        callback = EvolutionCallback(
+            run,
+            manifest,
+            queue,
+            args.checkpoint_every,
+            dense_until=args.dense_until,
+            late_every=args.late_checkpoint_every,
+            target_success_rate=args.convergence_success_rate,
+            target_window=args.convergence_windows,
+        )
         callback.model = model
         callback.snapshot("initial")
         model.learn(total_timesteps=args.timesteps, callback=callback)
         manifest["training_seconds"] = time.perf_counter() - callback.started
         stopped = (run / "STOP").exists()
-        callback.snapshot("stopped" if stopped else "final")
+        converged = callback.convergence_step is not None and not stopped
+        callback.snapshot("converged" if converged else "stopped" if stopped else "final")
+        if converged:
+            manifest["status"] = "converged"
         manifest["status"] = "rendering"
         callback.flush()
         queue.put(None)
@@ -308,7 +408,9 @@ def main():
     parser.add_argument("--envs", type=int, default=4)
     parser.add_argument("--threads", type=int, default=1)
     parser.add_argument("--n-steps", type=int, default=256)
-    parser.add_argument("--checkpoint-every", type=int, default=10_000)
+    parser.add_argument("--checkpoint-every", type=int, default=2_560)
+    parser.add_argument("--dense-until", type=int, default=32_000)
+    parser.add_argument("--late-checkpoint-every", type=int, default=10_240)
     parser.add_argument("--episode-seconds", type=float, default=12)
     parser.add_argument(
         "--reward-mode",
@@ -317,6 +419,14 @@ def main():
         help="导航目标函数：距离优先，或鼓励面向目标正向接近",
     )
     parser.add_argument("--eval-episodes", type=int, default=100)
+    parser.add_argument(
+        "--convergence-success-rate", type=float, default=1.0,
+        help="提前停止所需的最近 32 回合成功率",
+    )
+    parser.add_argument(
+        "--convergence-windows", type=int, default=2,
+        help="连续满足成功率的窗口数",
+    )
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--robot-xml")
     parser.add_argument("--gait-policy")

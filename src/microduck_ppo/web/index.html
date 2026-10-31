@@ -29,7 +29,8 @@
         <label
           >训练预算<select id="budget">
             <option value="10000">1 万步 · 快速验证</option>
-            <option value="100000" selected>10 万步</option>
+            <option value="30000" selected>3 万步 · 收敛演示</option>
+            <option value="100000">10 万步 · 长训练</option>
             <option value="300000">30 万步</option>
             <option value="1000000">100 万步</option>
           </select></label
@@ -53,7 +54,7 @@
       </section>
       <div class="disclosure">
         本次学习：目标导航。底层行走使用冻结的预训练步态，通过 14
-        个关节驱动；导航初始策略尚未学习目标。所有画面由本机 MuJoCo 生成。
+        个关节驱动；默认 30K 步，最近 32 回合达到 100% 后自动提前结束。所有画面由本机 MuJoCo 生成。
       </div>
       <section class="playground" aria-labelledby="playground-title">
         <div class="playground-copy">
@@ -63,11 +64,11 @@
             拖动橙色小鸭和蓝色圆形地毯，选择一个训练阶段，再运行同一套 MuJoCo
             策略。右侧画面是真实 3D
             网格仿真，起点和目标会被写入这次运行，结果不会混入训练集。鸭子约
-            14 cm 宽；步态主周期约 0.4 秒、单脚步幅约 3–4 cm，当前策略有效速度约 0.15–0.18 m/s。
+            14 cm 宽；深色金属件使用高金属度和清漆高光材质。步态主周期约 0.4 秒、单脚步幅约 3–4 cm，当前策略有效速度约 0.15–0.18 m/s。
             场地为 6 × 6 m，默认路线约 3.4 m；每次体验最长 20 秒，短路线抵达后会停在目标处继续展示。
           </p>
           <div class="play-controls">
-            <label>使用策略<select id="play-stage"></select></label>
+            <label>同场策略<select id="play-stage" multiple size="4"></select></label>
             <label
               >初始朝向
               <input
@@ -81,6 +82,7 @@
             >
             <button id="play-run" disabled>运行这个场景</button>
           </div>
+          <p id="play-strategy-note" class="play-strategy-note">可按住 Command/Ctrl 多选策略，观察不同阶段同时运动。</p>
           <div class="reward-card" id="reward-card">
             <b>当前目标函数：<span id="reward-name">距离优先</span></b>
             <p id="reward-formula" class="math-formula" aria-live="polite"></p>
@@ -169,7 +171,9 @@
             ><span>训练速度 <b id="speed">—</b></span
             ><span>最近回合平均回报 <b id="recent-return">—</b></span
             ><span>预计剩余采样与更新 <b id="eta">—</b></span
-            ><span>30K 阶段约 <b>40–50 秒</b>（本机 CPU）</span>
+            ><span>实时成功率 <b id="live-success">—</b></span
+            ><span>动作残差 <b id="live-residual">—</b></span
+            ><span>动作变化 <b id="live-delta">—</b></span>
           </div>
         </section>
         <section class="viewers">

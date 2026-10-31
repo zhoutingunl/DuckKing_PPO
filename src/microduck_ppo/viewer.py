@@ -205,7 +205,7 @@ class Handler(SimpleHTTPRequestHandler):
                 budget = int(data.get("timesteps", 100000))
                 envs = int(data.get("envs", 2))
                 reward_mode = str(data.get("reward_mode", "distance"))
-                if budget not in {10000, 100000, 300000, 1000000} or envs not in {1, 2, 4}:
+                if budget not in {10000, 30000, 100000, 300000, 1000000} or envs not in {1, 2, 4}:
                     raise ValueError("Unsupported training preset")
                 if reward_mode not in {"distance", "direct"}:
                     raise ValueError("Unsupported reward mode")
@@ -236,6 +236,10 @@ class Handler(SimpleHTTPRequestHandler):
                                 str(budget),
                                 "--envs",
                                 str(envs),
+                                "--checkpoint-every",
+                                "2560",
+                                "--dense-until",
+                                "32000",
                                 "--reward-mode",
                                 reward_mode,
                             ],
@@ -259,8 +263,13 @@ class Handler(SimpleHTTPRequestHandler):
                     "stopped",
                 }:
                     raise ValueError("请等待训练记录完成后再体验")
-                stage = str(data.get("stage", ""))
-                if not re.fullmatch(r"stages/\d{9}", stage):
+                raw_stages = data.get("stages", data.get("stage", ""))
+                if isinstance(raw_stages, str):
+                    raw_stages = [raw_stages]
+                if not isinstance(raw_stages, list) or not 1 <= len(raw_stages) <= 5:
+                    raise ValueError("请选择 1–5 个训练阶段")
+                stages = [str(stage) for stage in raw_stages]
+                if any(not re.fullmatch(r"stages/\d{9}", stage) for stage in stages):
                     raise ValueError("Invalid checkpoint stage")
                 start = [float(v) for v in data.get("start", [])]
                 goal = [float(v) for v in data.get("goal", [])]
@@ -274,10 +283,11 @@ class Handler(SimpleHTTPRequestHandler):
                 distance = sum((start[i] - goal[i]) ** 2 for i in range(2)) ** 0.5
                 if abs(yaw) > 3.1415927 or distance < 0.1:
                     raise ValueError("请设置有效朝向，并让起点与目标至少相距 0.1 米")
-                stage_policy = confined(run, f"{stage}/policy.zip")
-                if not stage_policy.is_file():
-                    raise ValueError("所选策略还没有生成")
-                session = create_session(run, stage, start, goal, yaw)
+                for stage in stages:
+                    stage_policy = confined(run, f"{stage}/policy.zip")
+                    if not stage_policy.is_file():
+                        raise ValueError(f"所选策略还没有生成：{stage}")
+                session = create_session(run, stages, start, goal, yaw)
                 self.server.playground_sessions[session.id] = session
                 return self.json_response({"id": session.id}, 202)
             if (

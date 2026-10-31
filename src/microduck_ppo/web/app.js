@@ -28,7 +28,8 @@ let sceneStart = { x: -1.4, y: 0 },
   camera = { azimuth: 135, elevation: -45, distance: 1.6 },
   cameraDrag = null,
   scene3d = null,
-  live3d = null;
+  live3d = null,
+  selectedPlayStages = [];
 const fmt = (n) => Number(n).toLocaleString("zh-CN");
 const duration = (seconds) =>
   seconds == null
@@ -86,6 +87,8 @@ function outcome(row) {
 function stageLabel(s) {
   return s.kind === "initial"
     ? "初始"
+    : s.kind === "converged"
+      ? "收敛"
     : s.kind === "final"
       ? "最终"
       : s.kind === "stopped"
@@ -185,12 +188,24 @@ function render() {
   $("empty").hidden = true;
   $("experiment").hidden = false;
   $("status").textContent = statuses[data.status] || data.status;
+  if (data.convergence?.timesteps) {
+    $("message").textContent = `最近 32 回合达到 ${Math.round(data.convergence.success_rate * 100)}%，已在 ${fmt(data.convergence.timesteps)} 步提前停止训练。`;
+  }
   $("progress-text").textContent =
     `${fmt(data.timesteps)} / ${fmt(data.budget)} 步`;
   $("progress").value = Math.min(100, (data.timesteps / data.budget) * 100);
   $("elapsed").textContent = duration(data.elapsed_seconds);
   $("recent-return").textContent =
     data.recent_return == null ? "—" : data.recent_return.toFixed(2);
+  $("live-success").textContent = data.recent_success_rate == null
+    ? "—"
+    : `${Math.round(data.recent_success_rate * 100)}%`;
+  $("live-residual").textContent = data.recent_action_residual == null
+    ? "—"
+    : data.recent_action_residual.toFixed(3);
+  $("live-delta").textContent = data.recent_action_delta == null
+    ? "—"
+    : data.recent_action_delta.toFixed(3);
   $("speed").textContent = data.steps_per_second
     ? `${Math.round(data.steps_per_second)} 步/秒`
     : "—";
@@ -364,7 +379,7 @@ function updateSceneMap() {
 }
 function setupPlayground() {
   const select = $("play-stage"),
-    previous = select.value;
+    previous = selectedPlayStages.length ? selectedPlayStages : [...select.selectedOptions].map((o) => o.value);
   select.replaceChildren(
     ...(data?.stages || [])
       .filter((s) => s.status === "ready" && s.directory)
@@ -374,13 +389,22 @@ function setupPlayground() {
         option.textContent =
           stageLabel(s) +
           (s.directory === data.best_directory ? " · 最佳" : "");
+        option.selected = previous.includes(s.directory);
         return option;
       }),
   );
-  if (previous && [...select.options].some((o) => o.value === previous))
-    select.value = previous;
+  if (!selectedPlayStages.length && select.options.length) select.options[0].selected = true;
+  selectedPlayStages = [...select.selectedOptions].map((option) => option.value);
   scene3d?.setPlacement([sceneStart.x, sceneStart.y], [sceneGoal.x, sceneGoal.y]);
   updateSceneMap();
+}
+function updatePlayStrategyList() {
+  const select = $("play-stage");
+  selectedPlayStages = [...select.selectedOptions].map((option) => option.value);
+  if (!selectedPlayStages.length && select.value) selectedPlayStages = [select.value];
+  $("play-strategy-note").textContent = selectedPlayStages.length > 1
+    ? `同场运行 ${selectedPlayStages.length} 个策略：${selectedPlayStages.map((stage) => stageLabel(data.stages.find((item) => item.directory === stage))).join("、")}`
+    : "可按住 Command/Ctrl 多选策略，观察不同阶段同时运动。";
 }
 function updateCameraReadout() {
   $("camera-readout").textContent =
@@ -450,7 +474,7 @@ $("scene-map").addEventListener("pointercancel", () => {
 $("play-yaw").oninput = () => {
   $("play-yaw-value").textContent = `${$("play-yaw").value}°`;
 };
-$("play-stage").onchange = updateSceneMap;
+$("play-stage").onchange = () => { updatePlayStrategyList(); updateSceneMap(); };
 $("play-run").onclick = async () => {
   if (!runId || !$("play-stage").value) return;
   $("play-run").disabled = true;
@@ -460,7 +484,7 @@ $("play-run").onclick = async () => {
     const result = await api(
       `/api/runs/${encodeURIComponent(runId)}/playground`,
       {
-        stage: $("play-stage").value,
+        stages: selectedPlayStages.length ? selectedPlayStages : [$("play-stage").value],
         start: [sceneStart.x, sceneStart.y],
         goal: [sceneGoal.x, sceneGoal.y],
         yaw: (Number($("play-yaw").value) * Math.PI) / 180,
@@ -525,7 +549,7 @@ $("play-run").onclick = async () => {
           ? "小鸭摔倒了"
           : "这次没有抵达";
       $("play-result-meta").textContent =
-        `策略 ${stageLabel(data.stages.find((s) => s.directory === record.stage))} · 最终距离 ${outcome.distance.toFixed(3)} 米 · 仿真 ${outcome.time.toFixed(1)} 秒 · 用时 ${record.elapsed_seconds.toFixed(1)} 秒`;
+        `${outcome.agent_count || selectedPlayStages.length} 个策略同场 · ${outcome.success_count || 0} 个已抵达 · 最终仿真 ${outcome.time.toFixed(1)} 秒 · 用时 ${record.elapsed_seconds.toFixed(1)} 秒`;
       $("play-result").hidden = false;
       $("play-message").textContent =
         "可以继续拖动位置，或换一个训练阶段再运行。";

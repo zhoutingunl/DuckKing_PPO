@@ -22,10 +22,11 @@ PLAYGROUND_EPISODE_SECONDS = 20.0
 
 
 class PlaygroundSession:
-    def __init__(self, session_id, run, stage, start, goal, yaw):
+    def __init__(self, session_id, run, stages, start, goal, yaw):
         self.id = session_id
         self.run = Path(run)
-        self.stage = stage
+        self.stages = list(stages)
+        self.stage = self.stages[0]
         self.start = list(start)
         self.goal = list(goal)
         self.yaw = float(yaw)
@@ -80,19 +81,34 @@ class PlaygroundSession:
                 boundary_radius=max(3.5, config.boundary_radius),
                 floor_half_extent=max(4.0, config.floor_half_extent),
             )
-            policy = (self.run / self.stage / "policy.zip").resolve()
-            if not policy.is_file() or not policy.is_relative_to(self.run.resolve()):
-                raise FileNotFoundError("Selected checkpoint policy is not ready")
             torch.set_num_threads(1)
-            model = PPO.load(policy, device="cpu")
-            env = NavigationEnv(config, render_mode="rgb_array")
-            obs, info = env.reset(
-                seed=42,
-                options={"start": self.start, "goal": self.goal, "yaw": self.yaw},
-            )
+            models = []
+            envs = []
+            observations = []
+            agent_infos = []
+            for stage in self.stages:
+                policy = (self.run / stage / "policy.zip").resolve()
+                if not policy.is_file() or not policy.is_relative_to(self.run.resolve()):
+                    raise FileNotFoundError(f"Selected checkpoint policy is not ready: {stage}")
+                model = PPO.load(policy, device="cpu")
+                agent_env = NavigationEnv(config, render_mode="rgb_array")
+                obs, agent_info = agent_env.reset(
+                    seed=42,
+                    options={"start": self.start, "goal": self.goal, "yaw": self.yaw},
+                )
+                models.append(model)
+                envs.append(agent_env)
+                observations.append(obs)
+                agent_infos.append(dict(agent_info))
+            env = envs[0]
             with self.lock:
                 self.visual_model = env.visual_model_payload()
-                self.visual_state = env.visual_state()
+                self.visual_state = {
+                    "agents": [agent_env.visual_state() for agent_env in envs],
+                    "goal": self.goal,
+                    "start": self.start,
+                    "yaw": self.yaw,
+                }
                 self.camera_home = {
                     "azimuth": env.camera_azimuth,
                     "elevation": env.camera_elevation,
@@ -100,43 +116,60 @@ class PlaygroundSession:
                 }
                 self.camera = dict(self.camera_home)
                 self.status = "running"
-                self.info = dict(info)
+                self.info = {
+                    "time": 0.0,
+                    "distance": float(np.linalg.norm(np.asarray(self.goal) - self.start)),
+                    "agents": [
+                        {**agent_info, "stage": stage, "is_success": False}
+                        for stage, agent_info in zip(self.stages, agent_infos, strict=True)
+                    ],
+                    "agent_count": len(self.stages),
+                    "success_count": 0,
+                }
             self._publish(env)
-            reached = False
+            reached = [False] * len(envs)
+            finished = [False] * len(envs)
             for frame_index in range(round(config.episode_seconds / config.control_interval)):
                 loop_started = time.perf_counter()
-                if reached:
-                    # Hold the final pose and keep publishing frames. Calling
-                    # Gymnasium step() after a terminated episode would make
-                    # the replay state ambiguous.
-                    action = np.zeros(2, dtype=np.float32)
-                    reward = 0.0
-                    terminated = truncated = False
-                    info = {
-                        **info,
-                        "time": (frame_index + 1) * config.control_interval,
-                        "is_success": True,
-                        "failure_reason": "",
-                    }
-                else:
-                    action, _ = model.predict(obs, deterministic=True)
-                    obs, reward, terminated, truncated, info = env.step(action)
-                    if info.get("is_success"):
-                        reached = True
-                        # A short hand-placed route remains visible for the
-                        # complete 20 s demo after arrival.
-                        info = {
-                            **info,
+                for index, (model, agent_env) in enumerate(zip(models, envs, strict=True)):
+                    if finished[index]:
+                        continue
+                    if reached[index]:
+                        agent_infos[index] = {
+                            **agent_infos[index],
                             "time": (frame_index + 1) * config.control_interval,
                             "is_success": True,
                             "failure_reason": "",
+                            "reward": 0.0,
                         }
+                        continue
+                    action, _ = model.predict(observations[index], deterministic=True)
+                    observations[index], reward, terminated, truncated, agent_infos[index] = agent_env.step(action)
+                    agent_infos[index] = {
+                        **agent_infos[index],
+                        "stage": self.stages[index],
+                        "reward": float(reward),
+                    }
+                    if agent_infos[index].get("is_success"):
+                        reached[index] = True
+                    elif terminated or truncated:
+                        finished[index] = True
                 self._publish(env)
                 with self.lock:
-                    self.info = {**info, "reward": float(reward)}
-                    self.visual_state = env.visual_state()
-                if (terminated or truncated) and not reached:
-                    break
+                    self.info = {
+                        "time": (frame_index + 1) * config.control_interval,
+                        "distance": min(float(item.get("distance", 0.0)) for item in agent_infos),
+                        "agents": [dict(item) for item in agent_infos],
+                        "agent_count": len(envs),
+                        "success_count": sum(reached),
+                        "is_success": all(reached),
+                    }
+                    self.visual_state = {
+                        "agents": [agent_env.visual_state() for agent_env in envs],
+                        "goal": self.goal,
+                        "start": self.start,
+                        "yaw": self.yaw,
+                    }
                 time.sleep(max(0, config.control_interval - (time.perf_counter() - loop_started)))
             with self.lock:
                 self.status = "ready"
@@ -148,7 +181,8 @@ class PlaygroundSession:
                 self.finished = time.perf_counter()
         finally:
             if env is not None:
-                env.close()
+                for agent_env in locals().get("envs", [env]):
+                    agent_env.close()
 
     def snapshot(self):
         with self.lock:
@@ -156,6 +190,7 @@ class PlaygroundSession:
                 "id": self.id,
                 "status": self.status,
                 "stage": self.stage,
+                "stages": list(self.stages),
                 "start": self.start,
                 "goal": self.goal,
                 "yaw": self.yaw,
@@ -198,6 +233,6 @@ class PlaygroundSession:
             return dict(self.camera)
 
 
-def create_session(run, stage, start, goal, yaw):
+def create_session(run, stages, start, goal, yaw):
     session_id = time.strftime("play-%H%M%S-") + uuid.uuid4().hex[:5]
-    return PlaygroundSession(session_id, run, stage, start, goal, yaw).start_session()
+    return PlaygroundSession(session_id, run, stages, start, goal, yaw).start_session()

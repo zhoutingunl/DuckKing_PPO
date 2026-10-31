@@ -348,6 +348,7 @@ class NavigationEnv(gym.Env):
         """Return world poses for the official display meshes."""
         geom_ids = np.flatnonzero(self.model.geom_group == 2)
         return {
+            "root": self.data.qpos[self.root : self.root + 3].tolist(),
             "geoms": [
                 {
                     "id": int(geom_id),
@@ -383,6 +384,7 @@ class NavigationEnv(gym.Env):
             raise ValueError("Navigation action must contain two finite values")
         action = np.clip(action, -1, 1)
         before = self._metrics()["distance"]
+        action_delta = float(np.mean(np.abs(action - self.last_action)))
         self.command[:] = 0
         self.command[0] = action[0] * self.config.max_speed
         self.command[2] = action[1] * self.config.max_yaw_rate
@@ -443,6 +445,8 @@ class NavigationEnv(gym.Env):
         self._last_heading_alignment = heading_alignment
         self.last_action[:] = action
         info.update(
+            action_residual=float(np.mean(np.abs(action))),
+            action_delta=action_delta,
             is_success=bool(success),
             fallen=bool(fallen),
             failure_reason="fall"

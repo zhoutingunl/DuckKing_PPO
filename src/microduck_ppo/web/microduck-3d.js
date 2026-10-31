@@ -35,7 +35,7 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(0, 0.12, 0);
   controls.minDistance = 0.55;
-  controls.maxDistance = 5;
+  controls.maxDistance = 9;
   controls.maxPolarAngle = Math.PI / 2.02;
   controls.enableDamping = true;
   controls.update();
@@ -57,6 +57,9 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
   sun.castShadow = true;
   sun.shadow.mapSize.set(1024, 1024);
   scene.add(sun);
+  const rim = new THREE.DirectionalLight(0xb8d9ff, 1.8);
+  rim.position.set(-2, 1.5, -3);
+  scene.add(rim);
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(6, 6),
     new THREE.MeshStandardMaterial({ color: '#e9eff0', roughness: 0.95 }),
@@ -94,6 +97,8 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
   let placedGoal = { x: 1.4, y: 0 };
   let modelStart = { x: 0, y: 0 };
   let meshEntries = new Map();
+  let agentGroups = [];
+  let createAgent = null;
   let animation = 0;
   let active = false;
   let dragging = null;
@@ -180,6 +185,7 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
   function loadModel(model) {
     world.clear();
     meshEntries = new Map();
+    agentGroups = [];
     const meshes = new Map();
     for (const [id, payload] of Object.entries(model.meshes || {})) {
       const geometry = new THREE.BufferGeometry();
@@ -188,21 +194,36 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
       geometry.computeVertexNormals();
       meshes.set(Number(id), geometry);
     }
-    for (const geom of model.geoms || []) {
-      const surface = geom.material || {};
-      const mesh = new THREE.Mesh(
-        meshes.get(Number(geom.mesh)),
-        new THREE.MeshStandardMaterial({
-          color: color(geom.rgba),
-          roughness: 0.66,
-          metalness: 0.08,
-        }),
-      );
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      world.add(mesh);
-      meshEntries.set(geom.id, mesh);
-    }
+    const makeMaterial = (rgba) => {
+      const c = color(rgba);
+      const luminance = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+      const darkMetal = luminance < 0.30;
+      return new THREE.MeshPhysicalMaterial({
+        color: c,
+        roughness: darkMetal ? 0.22 : 0.30,
+        metalness: darkMetal ? 0.78 : 0.36,
+        clearcoat: darkMetal ? 0.28 : 0.52,
+        clearcoatRoughness: 0.16,
+        specularIntensity: 1.0,
+      });
+    };
+    createAgent = (tint = 0) => {
+      const group = new THREE.Group();
+      group.userData.agent = tint;
+      for (const geom of model.geoms || []) {
+        const mesh = new THREE.Mesh(meshes.get(Number(geom.mesh)), makeMaterial(geom.rgba));
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        group.add(mesh);
+        if (tint === 0) meshEntries.set(geom.id, mesh);
+      }
+      world.add(group);
+      agentGroups.push({
+        group,
+        meshes: new Map(group.children.map((mesh, index) => [model.geoms[index].id, mesh])),
+      });
+    };
+    createAgent(0);
     if (model.initial_state) {
       modelStart = {
         x: Number(model.initial_state.start?.[0] || 0),
@@ -214,6 +235,11 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
   function updateState(state, { live = true } = {}) {
     active = live;
     world.position.set(0, 0, 0);
+    const states = Array.isArray(state?.agents) ? state.agents : [state];
+    while (agentGroups.length < states.length) createAgent(agentGroups.length);
+    agentGroups.forEach((agent, index) => {
+      agent.group.visible = index < states.length;
+    });
     if (!live) {
       modelStart = {
         x: Number(state.start?.[0] || 0),
@@ -221,17 +247,24 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
       };
       world.position.set(placedStart.x - modelStart.x, 0, -(placedStart.y - modelStart.y));
     }
-    for (const geom of state.geoms || []) {
-      const mesh = meshEntries.get(geom.id);
-      if (!mesh) continue;
-      mesh.position.set(geom.position[0], geom.position[1], geom.position[2]);
-      const matrix = new THREE.Matrix4().set(
-        geom.rotation[0][0], geom.rotation[0][1], geom.rotation[0][2], 0,
-        geom.rotation[1][0], geom.rotation[1][1], geom.rotation[1][2], 0,
-        geom.rotation[2][0], geom.rotation[2][1], geom.rotation[2][2], 0,
-        0, 0, 0, 1,
-      );
-      mesh.quaternion.setFromRotationMatrix(matrix);
+    for (const [index, agentState] of states.entries()) {
+      const agent = agentGroups[index];
+      // Separate identical starting poses by one duck width in the display
+      // layer only, so the audience can see all selected policies. Physics
+      // still runs from the exact same user-selected start.
+      agent.group.position.x = (index - (states.length - 1) / 2) * 0.16;
+      for (const geom of agentState.geoms || []) {
+        const mesh = agent.meshes.get(geom.id);
+        if (!mesh) continue;
+        mesh.position.set(geom.position[0], geom.position[1], geom.position[2]);
+        const matrix = new THREE.Matrix4().set(
+          geom.rotation[0][0], geom.rotation[0][1], geom.rotation[0][2], 0,
+          geom.rotation[1][0], geom.rotation[1][1], geom.rotation[1][2], 0,
+          geom.rotation[2][0], geom.rotation[2][1], geom.rotation[2][2], 0,
+          0, 0, 0, 1,
+        );
+        mesh.quaternion.setFromRotationMatrix(matrix);
+      }
     }
     goal.visible = true;
     startMarker.visible = !active;
