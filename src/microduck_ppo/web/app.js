@@ -1,4 +1,4 @@
-import { createMicroDuck3D } from './microduck-3d.js?v=20261101-compiled-geom-fix';
+import { createMicroDuck3D } from './microduck-3d.js?v=20261101-display-scale-fix';
 
 const $ = (id) => document.getElementById(id);
 const statuses = {

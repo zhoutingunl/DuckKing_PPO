@@ -2,6 +2,10 @@ import * as THREE from './vendor/three.module.js';
 import { OrbitControls } from './vendor/OrbitControls.js';
 
 const WORLD_LIMIT = 3;
+// The official robot is about 14 cm wide while the audience floor is 6 m.
+// Enlarge only the display hierarchy so the duck is recognizable; all drag
+// coordinates and MuJoCo physics remain in meters.
+const DISPLAY_SCALE = 3;
 
 function decode(data, Type) {
   const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
@@ -208,7 +212,7 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
     // start. Since `world` performs the MuJoCo-to-Three x/y/z rotation, this
     // offset remains a MuJoCo-space (x, y, 0) vector.
     const root = agent.root || modelStart;
-    agent.group.position.set(point.x - root.x, point.y - root.y, 0);
+    agent.group.position.set(point.x - root.x, point.y - root.y, root.z);
     agent.label.position.set(point.x, 0.38, -point.y);
     agent.marker.position.set(point.x, 0.006, -point.y);
     onPlace({ agentId: agent.id, start: { ...point }, goal: { ...placedGoal }, source: 'agent' });
@@ -277,24 +281,32 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
     if (agent.label) scene.remove(agent.label);
     if (agent.marker) scene.remove(agent.marker);
     if (!agent.group) return;
-    agent.group.children.forEach((mesh) => {
-      mesh.material?.dispose();
-    });
+    agent.group.traverse((object) => object.material?.dispose());
     agent.label.material?.map?.dispose();
     agent.label.material?.dispose();
   }
   function createAgent(spec, index) {
     const group = new THREE.Group();
+    const visual = new THREE.Group();
+    visual.scale.setScalar(DISPLAY_SCALE);
+    group.add(visual);
+    const parts = [];
     const tint = ['#c45c20', '#267659', '#7d55a8', '#b13d61', '#947020'][index % 5];
     for (const geom of model.geoms || []) {
+      const frame = new THREE.Group();
       const mesh = new THREE.Mesh(model.meshes.get(Number(geom.mesh)), makeMaterial(geom.rgba));
       mesh.castShadow = true;
       mesh.receiveShadow = true;
-      // MuJoCo's compiled geom_pos/geom_quat already include the XML mesh
-      // offset and orientation. Applying mesh_pos/mesh_quat a second time
-      // puts the head and shell on the ground. Keep raw shared vertices in
-      // the geom frame, as DuckKing's physics renderer does.
-      group.add(mesh);
+      // Keep the same hierarchy as MuJoCo/DuckKing: runtime geom pose on the
+      // frame, then the mesh's authored local offset and orientation below it.
+      if (geom.mesh_position) mesh.position.fromArray(geom.mesh_position);
+      if (geom.mesh_quaternion) mesh.quaternion.fromArray([
+        geom.mesh_quaternion[1], geom.mesh_quaternion[2],
+        geom.mesh_quaternion[3], geom.mesh_quaternion[0],
+      ]);
+      frame.add(mesh);
+      visual.add(frame);
+      parts.push(frame);
     }
     world.add(group);
     const label = labelSprite(spec.label, tint);
@@ -311,7 +323,7 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
       group,
       label,
       marker,
-      meshes: group.children.map((mesh, i) => [model.geoms[i].id, mesh]),
+      meshes: parts.map((part, i) => [model.geoms[i].id, part]),
       root: { ...modelStart },
     };
   }
@@ -343,7 +355,7 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
       current.group.position.set(
         item.start.x - current.root.x,
         item.start.y - current.root.y,
-        0,
+        current.root.z,
       );
       // Mesh positions are already expressed in world coordinates. Keep the
       // official scale so the 70 body parts stay assembled around the root.
@@ -388,9 +400,9 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
         z: Number(agentState.root?.[2] || 0),
       };
       agent.group.position.set(
-        nextLive ? 0 : agent.start.x - agent.root.x,
-        nextLive ? 0 : agent.start.y - agent.root.y,
-        0,
+        nextLive ? agent.root.x : agent.start.x - agent.root.x,
+        nextLive ? agent.root.y : agent.start.y - agent.root.y,
+        agent.root.z,
       );
       agent.label.position.set(nextLive ? agent.root.x : agent.start.x, nextLive ? agent.root.z + 0.38 : 0.38, nextLive ? -agent.root.y : -agent.start.y);
       agent.marker.position.set(nextLive ? agent.root.x : agent.start.x, 0.006, nextLive ? -agent.root.y : -agent.start.y);
@@ -398,9 +410,14 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
       for (const geom of agentState.geoms || []) {
         const part = agent.meshes.find(([id]) => id === geom.id)?.[1];
         if (!part) continue;
-        // Geom poses are world-space MuJoCo coordinates.  The per-mesh local
-        // transform is already attached to the child mesh above.
-        part.position.set(...geom.position);
+        // Store geom pose relative to the root. The parent group carries the
+        // root/placement translation, so the display scale does not amplify
+        // the duck's travel across the floor.
+        part.position.set(
+          geom.position[0] - agent.root.x,
+          geom.position[1] - agent.root.y,
+          geom.position[2] - agent.root.z,
+        );
         part.quaternion.setFromRotationMatrix(new THREE.Matrix4().set(
           geom.rotation[0][0], geom.rotation[0][1], geom.rotation[0][2], 0,
           geom.rotation[1][0], geom.rotation[1][1], geom.rotation[1][2], 0,
