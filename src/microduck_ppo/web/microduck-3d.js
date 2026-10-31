@@ -114,6 +114,8 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
   let agents = [];
   let model = null;
   let modelStart = { x: 0, y: 0, z: 0 };
+  let latestState = null;
+  let latestStateLive = false;
   let live = false;
   let dragging = null;
   let frame = 0;
@@ -357,6 +359,10 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
       current.marker.position.set(item.start.x, 0.006, -item.start.y);
       return current;
     });
+    // Adding a strategy after the official model has loaded creates a new
+    // group. Reapply the cached reset/live poses so the new duck is assembled
+    // at its configured start instead of showing its unposed zero-state mesh.
+    if (model && latestState) updateState(latestState, { live: latestStateLive });
   }
   function loadModel(payload) {
     const specs = agents.map(({ id, stage, label, start, yaw }) => ({ id, stage, label, start, yaw }));
@@ -376,6 +382,8 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
   }
   function updateState(state, { live: nextLive = true } = {}) {
     live = nextLive;
+    latestState = state;
+    latestStateLive = nextLive;
     let states = Array.isArray(state?.agents) ? state.agents : [state];
     if (!nextLive && states.length === 1 && agents.length > 1) states = agents.map(() => states[0]);
     states.forEach((agentState, index) => {
@@ -416,7 +424,7 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
     setAgents(agents);
     const center = new THREE.Vector3((start[0] + target[0]) / 2, 0.11, -(start[1] + target[1]) / 2);
     const span = Math.hypot(target[0] - start[0], target[1] - start[1]);
-    camera.position.copy(center).add(new THREE.Vector3(1.75, 1.35, 1.9).normalize().multiplyScalar(Math.max(1.8, Math.min(4.2, 1.4 + 1.05 * span))));
+    camera.position.copy(center).add(new THREE.Vector3(1.75, 1.35, 1.9).normalize().multiplyScalar(Math.max(1.35, Math.min(3.1, 0.9 + 0.78 * span))));
     controls.target.copy(center);
     controls.update();
     controls.saveState();
