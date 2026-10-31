@@ -275,8 +275,9 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
     if (agent.label) scene.remove(agent.label);
     if (agent.marker) scene.remove(agent.marker);
     if (!agent.group) return;
-    agent.group.children.forEach((mesh) => {
-      mesh.material?.dispose();
+    agent.group.children.forEach((part) => {
+      part.children?.forEach((mesh) => mesh.material?.dispose());
+      part.material?.dispose();
     });
     agent.label.material?.map?.dispose();
     agent.label.material?.dispose();
@@ -285,10 +286,20 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
     const group = new THREE.Group();
     const tint = ['#c45c20', '#267659', '#7d55a8', '#b13d61', '#947020'][index % 5];
     for (const geom of model.geoms || []) {
+      const part = new THREE.Group();
       const mesh = new THREE.Mesh(model.meshes.get(Number(geom.mesh)), makeMaterial(geom.rgba));
       mesh.castShadow = true;
       mesh.receiveShadow = true;
-      group.add(mesh);
+      // `mesh_vert` is in the shared mesh frame.  MuJoCo's mesh_pos and
+      // mesh_quat place that frame inside this geom frame; omitting them
+      // makes shells, bearings and supports appear far from the body.
+      if (geom.mesh_position) mesh.position.fromArray(geom.mesh_position);
+      if (geom.mesh_quaternion) mesh.quaternion.fromArray([
+        geom.mesh_quaternion[1], geom.mesh_quaternion[2],
+        geom.mesh_quaternion[3], geom.mesh_quaternion[0],
+      ]);
+      part.add(mesh);
+      group.add(part);
     }
     world.add(group);
     const label = labelSprite(spec.label, tint);
@@ -305,7 +316,7 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
       group,
       label,
       marker,
-      meshes: group.children.map((mesh, i) => [model.geoms[i].id, mesh]),
+      meshes: group.children.map((part, i) => [model.geoms[i].id, part]),
       root: { ...modelStart },
     };
   }
@@ -384,14 +395,12 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
       agent.marker.position.set(nextLive ? agent.root.x : agent.start.x, 0.006, nextLive ? -agent.root.y : -agent.start.y);
       agent.marker.visible = !nextLive;
       for (const geom of agentState.geoms || []) {
-        const mesh = agent.meshes.find(([id]) => id === geom.id)?.[1];
-        if (!mesh) continue;
-        // Geom poses are already world-space MuJoCo coordinates.  Applying
-        // the root subtraction here as well as on the group separated the
-        // official mesh parts and produced the white fragments seen in the
-        // viewer.
-        mesh.position.set(...geom.position);
-        mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().set(
+        const part = agent.meshes.find(([id]) => id === geom.id)?.[1];
+        if (!part) continue;
+        // Geom poses are world-space MuJoCo coordinates.  The per-mesh local
+        // transform is already attached to the child mesh above.
+        part.position.set(...geom.position);
+        part.quaternion.setFromRotationMatrix(new THREE.Matrix4().set(
           geom.rotation[0][0], geom.rotation[0][1], geom.rotation[0][2], 0,
           geom.rotation[1][0], geom.rotation[1][1], geom.rotation[1][2], 0,
           geom.rotation[2][0], geom.rotation[2][1], geom.rotation[2][2], 0,

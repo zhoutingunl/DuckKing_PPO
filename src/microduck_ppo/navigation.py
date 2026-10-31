@@ -334,6 +334,12 @@ class NavigationEnv(gym.Env):
                     "mesh": mesh_id,
                     "rgba": rgba[:3].tolist(),
                     "material": material_info,
+                    # MuJoCo stores mesh vertices in the mesh frame.  A mesh
+                    # can be shared by several geoms, so its per-geom local
+                    # offset/orientation must travel with the geom rather
+                    # than being baked into the shared vertex buffer.
+                    "mesh_position": self.model.mesh_pos[mesh_id].tolist(),
+                    "mesh_quaternion": self.model.mesh_quat[mesh_id].tolist(),
                 }
             )
         return {
