@@ -530,7 +530,6 @@ $("play-run").onclick = async () => {
       }
       if (record.status !== "ready")
         throw Error(record.error || "场景回放失败");
-      playgroundId = null;
       $("play-frame").src =
         `${playgroundUrl(playgroundId, "/frame.jpg")}?seq=${record.frame_seq}`;
       const outcome = record.info;
@@ -555,6 +554,7 @@ $("play-run").onclick = async () => {
         "可以继续拖动位置，或换一个训练阶段再运行。";
       scene3d?.setPlacementMode();
       updateSceneMap();
+      playgroundId = null;
     };
     await wait();
   } catch (error) {

@@ -154,6 +154,26 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
         return { kind: 'agent', id: agent.id };
       }
     }
+    // The official duck is small at the default 6 m view. Pick the closest
+    // configured start marker in screen space so a normal click can always
+    // begin a drag, even when the mesh itself is only a few pixels wide.
+    if (!live) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      let closest = null;
+      let distance = 54;
+      for (const agent of agents) {
+        const start = agent.start || { x: 0, y: 0 };
+        const projected = new THREE.Vector3(start.x, 0.18, -start.y).project(camera);
+        const sx = rect.left + (projected.x + 1) * rect.width / 2;
+        const sy = rect.top + (1 - projected.y) * rect.height / 2;
+        const candidate = Math.hypot(event.clientX - sx, event.clientY - sy);
+        if (candidate < distance) {
+          closest = agent;
+          distance = candidate;
+        }
+      }
+      if (closest) return { kind: 'agent', id: closest.id };
+    }
     // At the default wide camera a 14 cm duck is only a few pixels wide.
     // Pick the closest configured start marker when the mesh ray misses it.
     if (!live) {
@@ -177,7 +197,7 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
   function moveAgent(agent, point) {
     agent.start = { ...point };
     const root = agent.root || modelStart;
-    agent.group.position.set(point.x - root.x, point.y - root.y, 0);
+    agent.group.position.set(point.x - root.x, 0, -(point.y - root.y));
     agent.label.position.set(point.x, 0.38, -point.y);
     agent.marker.position.set(point.x, 0.006, -point.y);
     onPlace({ agentId: agent.id, start: { ...point }, goal: { ...placedGoal }, source: 'agent' });
@@ -185,10 +205,12 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
   renderer.domElement.addEventListener('pointerdown', (event) => {
     const hit = hitTarget(event);
     if (!hit || live) return;
+    event.preventDefault();
+    event.stopPropagation();
     dragging = hit;
     controls.enabled = false;
     renderer.domElement.setPointerCapture(event.pointerId);
-  });
+  }, true);
   renderer.domElement.addEventListener('pointermove', (event) => {
     if (!dragging) return;
     const point = floorPoint(event);
@@ -262,7 +284,7 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
     world.add(group);
     const label = labelSprite(spec.label, tint);
     const marker = new THREE.Mesh(
-      new THREE.RingGeometry(0.105, 0.135, 40),
+      new THREE.RingGeometry(0.15, 0.19, 40),
       new THREE.MeshBasicMaterial({ color: tint, side: THREE.DoubleSide, transparent: true, opacity: 0.9 }),
     );
     marker.rotation.x = -Math.PI / 2;
@@ -303,8 +325,7 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
       Object.assign(current, item);
       if (!current.group || !current.label) return current;
       current.root = current.root || { ...modelStart };
-      current.group.visible = true;
-      current.group.position.set(item.start.x - current.root.x, item.start.y - current.root.y, 0);
+      current.group.position.set(item.start.x - current.root.x, 0, -(item.start.y - current.root.y));
       current.group.visible = true;
       current.label.position.set(item.start.x, 0.38, -item.start.y);
       current.marker.position.set(item.start.x, 0.006, -item.start.y);
@@ -338,7 +359,7 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
         y: Number(agentState.root?.[1] || 0),
         z: Number(agentState.root?.[2] || 0),
       };
-      agent.group.position.set(nextLive ? 0 : agent.start.x - agent.root.x, nextLive ? 0 : agent.start.y - agent.root.y, 0);
+      agent.group.position.set(nextLive ? 0 : agent.start.x - agent.root.x, 0, nextLive ? 0 : -(agent.start.y - agent.root.y));
       agent.label.position.set(nextLive ? agent.root.x : agent.start.x, nextLive ? agent.root.z + 0.38 : 0.38, nextLive ? -agent.root.y : -agent.start.y);
       agent.marker.position.set(nextLive ? agent.root.x : agent.start.x, 0.006, nextLive ? -agent.root.y : -agent.start.y);
       agent.marker.visible = !nextLive;
