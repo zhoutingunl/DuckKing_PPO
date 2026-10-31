@@ -81,8 +81,9 @@
           </div>
           <div class="reward-card" id="reward-card">
             <b>当前目标函数：<span id="reward-name">距离优先</span></b>
-            <p id="reward-formula">距离进步 + 成功奖励 − 动作变化 − 摔倒/越界惩罚</p>
-            <small>把鼠标移到参数上可查看含义；切换实验记录即可比较两种目标函数。</small>
+            <p id="reward-formula" class="math-formula" aria-live="polite"></p>
+            <div id="reward-explanation" class="formula-explanation">把鼠标移到公式中的符号上查看中文含义。</div>
+            <small>切换实验记录即可比较两种目标函数。</small>
           </div>
           <p id="play-message" class="play-message" role="status">
             先选择一个已完成的训练记录。

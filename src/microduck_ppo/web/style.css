@@ -393,6 +393,32 @@ button:disabled {
   margin: 3px 0;
   color: var(--blue);
 }
+.math-formula {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  font-family: "STIX Two Math", "Cambria Math", Georgia, serif;
+  font-size: 18px;
+  line-height: 1.7;
+}
+.formula-token {
+  border-bottom: 1px dashed var(--blue);
+  cursor: help;
+  outline: none;
+}
+.formula-token:hover,
+.formula-token:focus {
+  color: var(--orange);
+  background: #fff3e7;
+  border-bottom-color: var(--orange);
+}
+.formula-explanation {
+  min-height: 22px;
+  margin: 2px 0 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
 .reward-card small {
   color: var(--muted);
 }

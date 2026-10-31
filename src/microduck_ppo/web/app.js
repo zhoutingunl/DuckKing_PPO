@@ -235,9 +235,7 @@ function render() {
   setupPlayground();
   const rewardMode = data.config?.reward_mode || "distance";
   $("reward-name").textContent = rewardMode === "direct" ? "正面接近" : "距离优先";
-  $("reward-formula").textContent = rewardMode === "direct"
-    ? "距离进步 + 正面朝向改善 + 正向接近 − 面向目标倒退 − 动作突变 + 成功奖励 − 摔倒/越界"
-    : "距离进步 + 成功奖励 − 动作变化 − 摔倒/越界惩罚";
+  renderRewardFormula(rewardMode);
   const accept = data.acceptance;
   const results = $("acceptance-results");
   results.replaceChildren();
@@ -274,6 +272,56 @@ function render() {
           ? "训练或阶段导出失败，未生成最终验收。"
           : "训练结束后，对验证集选出的最佳策略分别运行固定布局和随机布局评估。";
   }
+}
+const rewardTerms = {
+  "Δd": "距离进步：本步前后到目标的距离差，变小则为正奖励。",
+  "h": "朝向一致性：鸭子朝向与目标方向的余弦相似度，范围约为 −1 到 1。",
+  "a⁺": "正向接近动作：向前速度指令与朝向一致性的乘积。",
+  "a⁻": "倒退动作：面向目标时的反向速度指令，会产生惩罚。",
+  "Δa": "动作变化：本步动作相对上一步的变化量，用于抑制突变。",
+  "𝟙_success": "成功指示量：连续保持在目标半径内达到要求时为 1，否则为 0。",
+  "𝟙_failure": "失败指示量：摔倒或越界时为 1，否则为 0。",
+  "𝟙_boundary": "越界/摔倒失败指示量。",
+};
+function formulaToken(token, text) {
+  return `<span class="formula-token" tabindex="0" data-explanation="${text}">${token}</span>`;
+}
+function renderRewardFormula(mode) {
+  const formula = $("reward-formula");
+  const terms = mode === "direct"
+    ? [
+        formulaToken("30Δd", rewardTerms["Δd"]),
+        "+",
+        formulaToken("0.8Δh", rewardTerms.h),
+        "+",
+        formulaToken("0.10a⁺", rewardTerms["a⁺"]),
+        "−",
+        formulaToken("0.35a⁻", rewardTerms["a⁻"]),
+        "− 0.015 − 0.005",
+        formulaToken("Δa²", rewardTerms["Δa"]),
+        "+",
+        formulaToken("10𝟙_success", rewardTerms["𝟙_success"]),
+        "−",
+        formulaToken("5𝟙_failure", rewardTerms["𝟙_failure"]),
+      ]
+    : [
+        formulaToken("30Δd", rewardTerms["Δd"]),
+        "− 0.015 − 0.005",
+        formulaToken("Δa²", rewardTerms["Δa"]),
+        "+",
+        formulaToken("10𝟙_success", rewardTerms["𝟙_success"]),
+        "−",
+        formulaToken("5𝟙_failure", rewardTerms["𝟙_failure"]),
+      ];
+  formula.innerHTML = terms.join(" ");
+  formula.querySelectorAll(".formula-token").forEach((element) => {
+    const show = () => { $("reward-explanation").textContent = element.dataset.explanation; };
+    const clear = () => { $("reward-explanation").textContent = "把鼠标移到公式中的符号上查看中文含义。"; };
+    element.addEventListener("mouseenter", show);
+    element.addEventListener("focus", show);
+    element.addEventListener("mouseleave", clear);
+    element.addEventListener("blur", clear);
+  });
 }
 function mapToWorld(x, y) {
   return { x: ((x - 260) / 200) * 1.2, y: ((150 - y) / 110) * 1.2 };
