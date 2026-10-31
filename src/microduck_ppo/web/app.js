@@ -30,7 +30,8 @@ let sceneStart = { x: -1.4, y: 0 },
   scene3d = null,
   agentSpecs = [],
   agentSequence = 1,
-  editorModelRun = "";
+  editorModelRun = "",
+  sceneModelReady = false;
 const fmt = (n) => Number(n).toLocaleString("zh-CN");
 const duration = (seconds) =>
   seconds == null
@@ -486,18 +487,24 @@ $("play-run").onclick = async () => {
     scene3d?.setRunningMode();
     camera = { azimuth: 135, elevation: -45, distance: 1.6 };
     updateCameraReadout();
-    let liveModelLoaded = false;
+    // The page already loaded the official mesh once. Re-loading the same
+    // 70-geometric-part model for every playground session caused a transient
+    // render exception and made the polling loop look like a failed run.
+    let liveModelLoaded = sceneModelReady;
+    let liveModelLoadAttempted = sceneModelReady;
     const wait = async () => {
       const record = await api(
         `/api/runs/${encodeURIComponent(runId)}/playground/${encodeURIComponent(playgroundId)}`,
       );
-      if (record.visual_ready && !liveModelLoaded) {
+      if (record.visual_ready && !liveModelLoaded && !liveModelLoadAttempted) {
+        liveModelLoadAttempted = true;
         try {
           const modelPayload = await api(scene3dUrl(playgroundId, "visual-model"));
           scene3d?.loadModel(modelPayload);
           liveModelLoaded = true;
+          sceneModelReady = true;
         } catch (error) {
-          $("play-message").textContent = `3D 模型加载中：${error.message}`;
+          console.debug("playground mesh unavailable; continuing with the existing scene", error);
         }
       }
       if (["starting", "running"].includes(record.status)) {
@@ -506,7 +513,7 @@ $("play-run").onclick = async () => {
         const info = record.info || {};
         try {
           const visual = await api(scene3dUrl(playgroundId, "visual-state"));
-          if (liveModelLoaded) scene3d?.updateState(visual);
+          if (liveModelLoaded || sceneModelReady) scene3d?.updateState(visual);
         } catch (error) {
           // The JPEG evidence remains available while the first mesh state loads.
           console.debug("3D state pending", error);
@@ -695,7 +702,7 @@ try {
   $("play-message").textContent = "3D 视图暂不可用，仍可使用二维场景编辑器。";
 }
 async function loadEditorModel() {
-  if (!scene3d || !runId || editorModelRun === runId) return;
+  if (!scene3d || !runId || editorModelRun === runId || sceneModelReady) return;
   const loadingRun = runId;
   editorModelRun = runId;
   try {
@@ -704,8 +711,10 @@ async function loadEditorModel() {
     scene3d.loadModel(model);
     scene3d.setAgents(agentSpecs);
     scene3d.setGoal(sceneGoal);
+    sceneModelReady = true;
   } catch (error) {
-    if (runId === loadingRun) editorModelRun = "";
-    $("play-message").textContent = `3D 官方模型加载失败：${error.message}`;
+    // Keep the run usable while a slow local model request is in flight. The
+    // next explicit run can still use its visual state/JPEG fallback.
+    console.debug("official mesh request failed", loadingRun, error);
   }
 }
