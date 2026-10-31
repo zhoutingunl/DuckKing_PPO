@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MicroDuck · 学习实验台</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script type="module" src="/app.js?v=20261101-display-scale-fix"></script>
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="/">MicroDuck <span>学习实验台</span></a
+      ><span class="local"><i></i> 本机 CPU 仿真</span>
+    </header>
+    <main>
+      <div class="intro">
+        <div>
+          <h1>看小鸭学会抵达。</h1>
+          <p>从未经训练的导航策略开始，逐阶段观察每一次真实变化。</p>
+        </div>
+        <div class="run-picker">
+          <label for="runs">实验记录</label
+          ><select id="runs">
+            <option>正在读取…</option>
+          </select>
+        </div>
+      </div>
+      <section class="controls" aria-label="训练控制">
+        <label
+          >训练预算<select id="budget">
+            <option value="10000">1 万步 · 快速验证</option>
+            <option value="30000" selected>3 万步 · 收敛演示</option>
+            <option value="100000">10 万步 · 长训练</option>
+            <option value="300000">30 万步</option>
+            <option value="1000000">100 万步</option>
+          </select></label
+        >
+        <label
+          >采样进程<select id="envs">
+            <option value="1">1 个</option>
+            <option value="2">2 个</option>
+            <option value="4" selected>4 个</option>
+          </select></label
+        >
+        <label
+          >目标函数<select id="reward-mode">
+            <option value="distance" selected>距离优先</option>
+            <option value="direct">正面接近</option>
+          </select></label
+        >
+        <button id="start">开始新训练</button
+        ><button id="stop" class="quiet" disabled>停止并保留记录</button
+        ><span id="message" role="status"></span>
+      </section>
+      <div class="disclosure">
+        本次学习：目标导航。底层行走使用冻结的预训练步态，通过 14
+        个关节驱动；默认 30K 步，最近 32 回合达到 100% 后自动提前结束。所有画面由本机 MuJoCo 生成。
+      </div>
+      <section class="playground" aria-labelledby="playground-title">
+        <div class="playground-copy">
+          <span class="eyebrow">观众实验</span>
+          <h2 id="playground-title">你来摆场景，小鸭来走</h2>
+          <p>
+            逐个添加不同训练阶段的策略鸭，把它们拖到不同起点，再运行同一套 MuJoCo
+            场景。画面是真实 3D
+            网格仿真，起点和目标会被写入这次运行，结果不会混入训练集。鸭子约
+            14 cm 宽；深色金属件使用高金属度和清漆高光材质。步态主周期约 0.4 秒、单脚步幅约 3–4 cm，当前策略有效速度约 0.15–0.18 m/s。
+            场地为 6 × 6 m，默认路线约 3.4 m；每次体验最长 20 秒，短路线抵达后会停在目标处继续展示。
+          </p>
+          <div class="play-controls">
+            <div class="agent-toolbar">
+              <button id="add-agent" type="button">＋ 添加策略鸭</button>
+              <span id="agent-count">0 只鸭子</span>
+            </div>
+            <button id="play-run" disabled>运行这个场景</button>
+          </div>
+          <div id="agent-list" class="agent-list" aria-live="polite"></div>
+          <p id="play-strategy-note" class="play-strategy-note">逐个添加策略鸭，再在右侧同一个 3D 场景中拖到不同起点。</p>
+          <div class="reward-card" id="reward-card">
+            <b>当前目标函数：<span id="reward-name">距离优先</span></b>
+            <p id="reward-formula" class="math-formula" aria-live="polite"></p>
+            <div id="reward-explanation" class="formula-explanation">把鼠标移到公式中的符号上查看中文含义。</div>
+            <small>切换实验记录即可比较两种目标函数。</small>
+          </div>
+          <p id="play-message" class="play-message" role="status">
+            先选择一个已完成的训练记录。训练路线为 0.35–0.65 m；超过该范围会进入 20 秒泛化演示。
+          </p>
+        </div>
+          <div class="scene-editor">
+            <div id="microduck-3d-scene" class="microduck-3d-editor" aria-label="3D 仿真场景编辑器">
+              <div class="scene-3d-help">左键按住鸭子脚下的彩色圆环拖动 · 蓝色目标也可拖动 · 空白处旋转 · 滚轮缩放</div>
+            </div>
+            <div class="camera-controls" aria-label="调整仿真视角">
+              <button id="camera-reset" class="quiet" type="button">复位视角</button>
+              <span id="camera-readout">视角 135° · -45° · 1.6×</span>
+            </div>
+          <svg
+            id="scene-map"
+            viewBox="0 0 520 300"
+            role="application"
+            aria-label="拖动小鸭起点和目标点来设置仿真场景"
+          >
+            <rect
+              x="18"
+              y="18"
+              width="484"
+              height="264"
+              rx="8"
+              class="scene-floor"
+            />
+            <path d="M260 22V278M22 150H498" class="scene-axis" />
+            <circle
+              id="scene-goal"
+              cx="353.3"
+              cy="150"
+              r="18"
+              class="scene-goal"
+              tabindex="0"
+            />
+            <g id="scene-duck" transform="translate(166.7 150)" tabindex="0">
+              <circle r="18" class="scene-duck" />
+              <path d="M-5-4L12 0-5 4Z" class="scene-beak" />
+            </g>
+            <text x="28" y="42" class="scene-label">
+              拖动策略鸭 / 蓝色目标
+            </text>
+            <text id="scene-coords" x="28" y="266" class="scene-coords"></text>
+          </svg>
+        </div>
+        <div class="play-result" id="play-result" hidden>
+            <div class="live-screen">
+            <img id="play-frame" alt="实时 MuJoCo 仿真画面" /><span
+              id="live-badge"
+              >LIVE · MuJoCo</span
+            >
+          </div>
+          <div>
+            <b id="play-result-title"></b><span id="play-result-meta"></span>
+            <div id="play-reward" class="play-reward" hidden>
+              <b>当前目标函数</b>
+              <span id="play-reward-mode"></span>
+              <div class="reward-breakdown">
+                <span title="本步距离减少带来的奖励">距离进步 <b id="reward-progress">—</b></span>
+                <span title="朝向目标改善带来的奖励">朝向改善 <b id="reward-heading">—</b></span>
+                <span title="面向目标正向移动带来的奖励">正向接近 <b id="reward-approach">—</b></span>
+                <span title="面向目标倒退时的惩罚">倒退惩罚 <b id="reward-reverse">—</b></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section id="empty" class="empty" hidden>
+        <h2>第一段学习，从这里开始</h2>
+        <p>选择训练预算并开始。初始策略会先被保存，随后生成阶段回放。</p>
+      </section>
+      <div id="experiment" hidden>
+        <section class="run-status" aria-live="polite">
+          <div><b id="status">准备中</b><span id="progress-text"></span></div>
+          <progress id="progress" max="100" value="0"></progress>
+          <div class="numbers">
+            <span>已运行 <b id="elapsed">—</b></span
+            ><span>训练速度 <b id="speed">—</b></span
+            ><span>最近回合平均回报 <b id="recent-return">—</b></span
+            ><span>预计剩余采样与更新 <b id="eta">—</b></span
+            ><span>实时成功率 <b id="live-success">—</b></span
+            ><span>动作残差 <b id="live-residual">—</b></span
+            ><span>动作变化 <b id="live-delta">—</b></span>
+          </div>
+        </section>
+        <section class="viewers">
+          <figure class="main-view">
+            <figcaption>
+              <div>
+                <b id="stage-title">当前阶段</b><span id="stage-meta"></span>
+              </div>
+              <a id="model-link" href="#">下载策略</a>
+            </figcaption>
+            <div class="screen">
+              <video
+                id="current"
+                controls
+                playsinline
+                preload="metadata"
+              ></video
+              ><span id="video-placeholder">检查点正在生成评估与视频…</span>
+            </div>
+            <div class="outcome" id="stage-outcome"></div>
+          </figure>
+          <figure class="initial-view">
+            <figcaption>
+              <div>
+                <b>训练前 · 0 步</b><span>同一个场景、初始位置与镜头</span>
+              </div>
+            </figcaption>
+            <div class="screen">
+              <video
+                id="initial"
+                controls
+                playsinline
+                preload="metadata"
+              ></video>
+            </div>
+            <div class="outcome" id="initial-outcome"></div>
+          </figure>
+        </section>
+        <section class="timeline">
+          <div class="timeline-heading">
+            <h2>策略演变</h2>
+            <div>
+              <label
+                >策略动作
+                <select id="mode">
+                  <option value="exploration" selected>带探索采样</option>
+                  <option value="showcase">确定性评估</option>
+                </select></label
+              ><button class="quiet" id="compare">同步从头播放</button
+              ><label
+                >速度
+                <select id="playback">
+                  <option value="1">1×</option>
+                  <option value="0.5">0.5×</option>
+                  <option value="0.25">0.25×</option>
+                </select></label
+              ><label
+                ><input id="follow" type="checkbox" checked /> 跟随最新</label
+              >
+            </div>
+          </div>
+          <label class="sr-only" for="stage">选择训练阶段</label
+          ><input id="stage" type="range" min="0" max="0" value="0" />
+          <div id="stage-buttons" class="stage-buttons"></div>
+          <p id="selection-note"></p>
+          <p>
+            带探索采样保留策略的随机尝试；确定性评估使用策略均值。两种模式均固定场景种子，各阶段的探索采样也使用相同种子。
+          </p>
+        </section>
+        <section class="evidence">
+          <div class="chart-panel">
+            <h2>检查点验证成功率</h2>
+            <svg
+              id="chart"
+              viewBox="0 0 650 220"
+              role="img"
+              aria-label="各检查点验证成功率随训练步数变化"
+            ></svg>
+            <p>
+              每个检查点使用 8
+              个验证场景，仅反映当前阶段；训练被停止或尚未完成时不代表最终验收。最终验收使用另外
+              100 个种子。失败与退步会原样保留。观众实验使用实时 MuJoCo
+              帧，不生成新的回放视频。
+            </p>
+          </div>
+          <div class="trajectory-panel">
+            <h2>这一回合走了哪里</h2>
+            <svg
+              id="trajectory"
+              viewBox="0 0 260 220"
+              role="img"
+              aria-label="当前策略的移动轨迹"
+            ></svg>
+            <p>蓝圈为目标，橙线为当前阶段，灰线为初始策略。</p>
+          </div>
+        </section>
+        <section class="acceptance">
+          <div>
+            <h2>独立验收</h2>
+            <p id="acceptance-note">
+              训练结束后，对验证集选出的最佳策略分别运行固定布局和随机布局评估。
+            </p>
+          </div>
+          <div id="acceptance-results"></div>
+        </section>
+        <details>
+          <summary>实验配置与可复现记录</summary>
+          <pre id="config"></pre>
+        </details>
+      </div>
+    </main>
+    <footer>
+      预算跑完与达到目标分别记录。初始、最佳和最终策略均保留；可随时回看。
+    </footer>
+  </body>
+</html>
