@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import gc
 import threading
 import time
 import uuid
@@ -19,6 +20,7 @@ from .navigation_artifacts import read_json
 
 PLAYGROUND_WORLD_LIMIT = 3.0
 PLAYGROUND_EPISODE_SECONDS = 20.0
+PLAYGROUND_FRAME_EVERY = 5
 
 
 class PlaygroundSession:
@@ -46,6 +48,7 @@ class PlaygroundSession:
         self.started = time.perf_counter()
         self.finished = None
         self.lock = threading.Lock()
+        self.stop_event = threading.Event()
         # Camera is viewer state only. It never changes the MuJoCo world or
         # the policy observation, so moving the view cannot move the target.
         self.camera = {"azimuth": 135.0, "elevation": -45.0, "distance": 1.6}
@@ -153,6 +156,8 @@ class PlaygroundSession:
             reached = [False] * len(envs)
             finished = [False] * len(envs)
             for frame_index in range(round(config.episode_seconds / config.control_interval)):
+                if self.stop_event.is_set():
+                    break
                 loop_started = time.perf_counter()
                 for index, (model, agent_env) in enumerate(zip(models, envs, strict=True)):
                     if finished[index]:
@@ -178,7 +183,11 @@ class PlaygroundSession:
                         reached[index] = True
                     elif terminated or truncated:
                         finished[index] = True
-                self._publish(env)
+                # The browser's interactive mesh is driven by visual-state.
+                # JPEG evidence is only a fallback, so encode it at 2 Hz
+                # instead of making MuJoCo/ImageIO work on every control step.
+                if frame_index % PLAYGROUND_FRAME_EVERY == 0:
+                    self._publish(env)
                 with self.lock:
                     self.info = {
                         "time": (frame_index + 1) * config.control_interval,
@@ -203,7 +212,7 @@ class PlaygroundSession:
                     }
                 time.sleep(max(0, config.control_interval - (time.perf_counter() - loop_started)))
             with self.lock:
-                self.status = "ready"
+                self.status = "stopped" if self.stop_event.is_set() else "ready"
                 self.finished = time.perf_counter()
         except Exception as error:
             with self.lock:
@@ -211,9 +220,16 @@ class PlaygroundSession:
                 self.error = f"{type(error).__name__}: {error}"
                 self.finished = time.perf_counter()
         finally:
-            if env is not None:
-                for agent_env in locals().get("envs", [env]):
-                    agent_env.close()
+            for agent_env in locals().get("envs", []):
+                agent_env.close()
+            # Release policy modules and MuJoCo buffers as soon as a session
+            # ends. The viewer may keep a short-lived result record, but it
+            # must not keep the heavyweight runtime objects alive.
+            for name in ("models", "envs", "observations", "agent_infos"):
+                value = locals().get(name)
+                if isinstance(value, list):
+                    value.clear()
+            gc.collect()
 
     def snapshot(self):
         with self.lock:
@@ -263,6 +279,9 @@ class PlaygroundSession:
                     raise ValueError(f"camera {key} must be finite")
                 self.camera[key] = value
             return dict(self.camera)
+
+    def request_stop(self):
+        self.stop_event.set()
 
 
 def create_session(run, agents, goal):

@@ -22,6 +22,8 @@ from .playground_runtime import create_session
 
 STATIC = Path(__file__).with_name("web")
 ACTIVE = {"starting", "training", "rendering", "evaluating"}
+PLAYGROUND_MAX_SESSIONS = 1
+PLAYGROUND_KEEP_SECONDS = 90.0
 
 
 def confined(root, relative):
@@ -39,6 +41,13 @@ class Handler(SimpleHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
+    def cleanup_playgrounds(self):
+        sessions = self.server.playground_sessions
+        for session_id, session in list(sessions.items()):
+            snapshot = session.snapshot()
+            if snapshot["status"] in {"ready", "failed"} and snapshot["elapsed_seconds"] > PLAYGROUND_KEEP_SECONDS:
+                sessions.pop(session_id, None)
+
     def json_response(self, payload, status=200):
         data = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode()
         self.send_response(status)
@@ -54,6 +63,7 @@ class Handler(SimpleHTTPRequestHandler):
         return confined(self.runs_root, run_id)
 
     def do_GET(self):
+        self.cleanup_playgrounds()
         parts = unquote(urlparse(self.path).path).strip("/").split("/")
         try:
             if parts == ["api", "runs"]:
@@ -323,6 +333,13 @@ class Handler(SimpleHTTPRequestHandler):
                     stage_policy = confined(run, f"{stage}/policy.zip")
                     if not stage_policy.is_file():
                         raise ValueError(f"所选策略还没有生成：{stage}")
+                self.cleanup_playgrounds()
+                active_sessions = sum(
+                    session.snapshot()["status"] in {"starting", "running"}
+                    for session in self.server.playground_sessions.values()
+                )
+                if active_sessions >= PLAYGROUND_MAX_SESSIONS:
+                    raise ValueError("已有一个场景正在运行，请等待结束后再开始")
                 session = create_session(run, agents, goal)
                 self.server.playground_sessions[session.id] = session
                 return self.json_response({"id": session.id}, 202)
@@ -345,6 +362,16 @@ class Handler(SimpleHTTPRequestHandler):
                     reset=bool(data.get("reset", False)),
                 )
                 return self.json_response({"camera": camera})
+            if (
+                len(parts) == 6
+                and parts[:4] == ["api", "runs", parts[2], "playground"]
+                and parts[5] == "stop"
+            ):
+                session = self.server.playground_sessions.get(parts[4])
+                if session is None:
+                    raise FileNotFoundError("场景会话不存在或服务已重启")
+                session.request_stop()
+                return self.json_response({"status": "stop_requested"})
             if len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "stop":
                 run = self.run_path(parts[2])
                 manifest = read_json(run / "run.json")

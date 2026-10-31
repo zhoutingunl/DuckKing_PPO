@@ -18,7 +18,8 @@ let runId = new URLSearchParams(location.search).get("run"),
   trajectoryKey = "",
   initialRows = [],
   currentRows = [],
-  polling = false;
+  polling = false,
+  pollTimer = null;
 let sceneStart = { x: -1.4, y: 0 },
   // Start with a long route so the first audience click visibly exercises the
   // 20 s generalization demo. Users can drag either marker to any position.
@@ -526,7 +527,7 @@ $("play-run").onclick = async () => {
         $("play-result-meta").textContent =
           `当前距离 ${(info.distance || 0).toFixed(3)} 米 · 画面每 0.1 秒更新`;
         $("play-result").hidden = false;
-        return setTimeout(wait, 100);
+        return setTimeout(wait, 180);
       }
       if (record.status !== "ready")
         throw Error(record.error || "场景回放失败");
@@ -592,6 +593,11 @@ $("play-frame").addEventListener("wheel", (event) => {
   clearTimeout(window.cameraTimer);
   window.cameraTimer = setTimeout(() => sendCamera(camera), 30);
 }, { passive: false });
+window.addEventListener("pagehide", () => {
+  if (!playgroundId || !runId || !navigator.sendBeacon) return;
+  const endpoint = `/api/runs/${encodeURIComponent(runId)}/playground/${encodeURIComponent(playgroundId)}/stop`;
+  navigator.sendBeacon(endpoint, new Blob(["{}"], { type: "application/json" }));
+});
 $("camera-reset").onclick = () => {
   scene3d?.resetCamera();
   sendCamera({ reset: true });
@@ -689,7 +695,9 @@ $("stop").onclick = async () => {
   }
 };
 poll();
-setInterval(poll, 3000);
+pollTimer = setInterval(() => {
+  if (!document.hidden) poll();
+}, 5000);
 
 try {
   scene3d = createMicroDuck3D($("microduck-3d-scene"), {
