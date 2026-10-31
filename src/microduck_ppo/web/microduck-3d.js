@@ -197,7 +197,9 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
   function moveAgent(agent, point) {
     agent.start = { ...point };
     const root = agent.root || modelStart;
-    agent.group.position.set(point.x - root.x, 0, -(point.y - root.y));
+    // `world` already rotates MuJoCo x/y/z into Three x/z/y. A placement
+    // offset therefore lives in the group's local x/y plane.
+    agent.group.position.set(point.x - root.x, point.y - root.y, 0);
     agent.label.position.set(point.x, 0.38, -point.y);
     agent.marker.position.set(point.x, 0.006, -point.y);
     onPlace({ agentId: agent.id, start: { ...point }, goal: { ...placedGoal }, source: 'agent' });
@@ -325,7 +327,10 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
       Object.assign(current, item);
       if (!current.group || !current.label) return current;
       current.root = current.root || { ...modelStart };
-      current.group.position.set(item.start.x - current.root.x, 0, -(item.start.y - current.root.y));
+      current.group.position.set(item.start.x - current.root.x, item.start.y - current.root.y, 0);
+      // Give the user a clearly visible placement preview; the live state
+      // switches back to the measured MuJoCo scale below.
+      current.group.scale.setScalar(live ? 1 : 3.0);
       current.group.visible = true;
       current.label.position.set(item.start.x, 0.38, -item.start.y);
       current.marker.position.set(item.start.x, 0.006, -item.start.y);
@@ -359,7 +364,8 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
         y: Number(agentState.root?.[1] || 0),
         z: Number(agentState.root?.[2] || 0),
       };
-      agent.group.position.set(nextLive ? 0 : agent.start.x - agent.root.x, 0, nextLive ? 0 : -(agent.start.y - agent.root.y));
+      agent.group.position.set(nextLive ? 0 : agent.start.x - agent.root.x, nextLive ? 0 : agent.start.y - agent.root.y, 0);
+      agent.group.scale.setScalar(nextLive ? 1 : 3.0);
       agent.label.position.set(nextLive ? agent.root.x : agent.start.x, nextLive ? agent.root.z + 0.38 : 0.38, nextLive ? -agent.root.y : -agent.start.y);
       agent.marker.position.set(nextLive ? agent.root.x : agent.start.x, 0.006, nextLive ? -agent.root.y : -agent.start.y);
       agent.marker.visible = !nextLive;
@@ -383,7 +389,7 @@ export function createMicroDuck3D(container, { onPlace = () => {}, onView = () =
     setAgents(agents);
     const center = new THREE.Vector3((start[0] + target[0]) / 2, 0.11, -(start[1] + target[1]) / 2);
     const span = Math.hypot(target[0] - start[0], target[1] - start[1]);
-    camera.position.copy(center).add(new THREE.Vector3(1.75, 1.35, 1.9).normalize().multiplyScalar(Math.max(1.8, Math.min(7, 1.4 + 1.25 * span))));
+    camera.position.copy(center).add(new THREE.Vector3(1.75, 1.35, 1.9).normalize().multiplyScalar(Math.max(1.8, Math.min(4.2, 1.4 + 1.05 * span))));
     controls.target.copy(center);
     controls.update();
     controls.saveState();
